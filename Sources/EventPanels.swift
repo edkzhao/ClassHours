@@ -369,16 +369,21 @@ struct EventDetailPanel: View {
     var body: some View {
         PanelChrome(title: "Event", onClose: onClose) {
             VStack(alignment: .leading, spacing: 14) {
-                field("Calendar") {
-                    Picker("", selection: $calendarID) {
-                        ForEach(state.writableCalendars) { Text($0.title).tag($0.id) }
+                // Match New Event: the calendar and event name describe the
+                // same identity, so they sit together on one row.
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Eyebrow(text: "Calendar")
+                        Picker("", selection: $calendarID) {
+                            ForEach(state.writableCalendars) { Text($0.title).tag($0.id) }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                }
-
-                field("Event") {
-                    TextField("", text: $title).textFieldStyle(.roundedBorder)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Eyebrow(text: "Event")
+                        TextField("", text: $title).textFieldStyle(.roundedBorder)
+                    }
                 }
 
                 field("Date & Time") {

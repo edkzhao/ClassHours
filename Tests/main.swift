@@ -72,6 +72,17 @@ let just29 = clip(start: date(2026, 8, 12, 15, 31),
                   end:   date(2026, 8, 12, 16, 0), into: august)!
 check("29m is short (boundary)", "\(just29.isShort)", "true")
 
+print("\nDock feedback count mirrors the visible report")
+let finishedUnchecked = clip(start: date(2026, 8, 12, 10, 0), end: date(2026, 8, 12, 11, 0), into: august)!
+let finishedChecked = clip(start: date(2026, 8, 13, 10, 0), end: date(2026, 8, 13, 11, 0), into: august)!
+let unfinished = clip(start: date(2026, 8, 20, 10, 0), end: date(2026, 8, 20, 11, 0), into: august)!
+let badgeCount = FeedbackCounter.uncheckedCount(
+    records: [finishedUnchecked, finishedChecked, unfinished, genuinelyShort],
+    now: date(2026, 8, 15, 12, 0),
+    countShortEvents: false,
+    isChecked: { $0.startDate == finishedChecked.startDate })
+check("only finished unchecked visible feedback counts", "\(badgeCount)", "1")
+
 print("\nHalf-open interval [start, end)")
 let atMidnight = date(2026, 9, 1, 0, 0)
 check("Sep 1 00:00 is not in August", "\(august.contains(atMidnight))",    "false")

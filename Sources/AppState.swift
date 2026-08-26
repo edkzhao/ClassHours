@@ -688,43 +688,20 @@ final class AppState: ObservableObject {
         defaults.set(slice, forKey: Keys.feedbackChecksPrefix + calendarID)
     }
 
-    /// Counts only months that have been initialised for feedback. This keeps
-    /// the first-run rule intact: old history stays out of the badge until its
-    /// month is opened and seeded, while newly finished sessions in a tracked
-    /// month appear immediately.
+    /// Mirrors the feedback column for the currently selected report. Counting
+    /// directly from `records` avoids silently including hidden calendars or
+    /// historical months the user is not looking at.
     func refreshDockBadge() {
-        guard hasReadAccess,
-              let from = calculationCalendar.date(byAdding: .year, value: -3, to: Date())
-        else {
+        guard hasReadAccess, selectedCalendarID != nil else {
             dockBadgeCount = 0
             NSApplication.shared.dockTile.badgeLabel = nil
             return
         }
-
-        let now = Date()
-        var count = 0
-        var seen = Set<String>()
-        for choice in calendars {
-            guard let ekCalendar = ekCalendar(choice.id) else { continue }
-            loadFeedbackPreferences(for: choice.id)
-            let predicate = store.predicateForEvents(withStart: from, end: now, calendars: [ekCalendar])
-            for event in store.events(matching: predicate) {
-                guard let start = event.startDate, let end = event.endDate,
-                      !event.isAllDay, event.status != .canceled, end <= now,
-                      Int(end.timeIntervalSince(start)) >= 30 * 60 || (countShortByCalendar[choice.id] ?? false)
-                else { continue }
-
-                let year = calculationCalendar.component(.year, from: start)
-                let month = calculationCalendar.component(.month, from: start)
-                let seededKey = Keys.feedbackSeededPrefix + choice.id + "." + String(format: "%04d-%02d", year, month)
-                guard defaults.bool(forKey: seededKey) else { continue }
-
-                let stableID = EventMonthCalculator.stableIdentity(event)
-                let unique = choice.id + "|" + stableID
-                guard seen.insert(unique).inserted else { continue }
-                if feedbackChecks[unique] != true { count += 1 }
-            }
-        }
+        let count = FeedbackCounter.uncheckedCount(
+            records: records,
+            now: Date(),
+            countShortEvents: countShortEvents,
+            isChecked: isChecked)
         dockBadgeCount = count
         NSApplication.shared.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
     }

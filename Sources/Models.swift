@@ -83,6 +83,23 @@ struct EventOccurrenceRecord: Identifiable, Hashable {
     func hasFinished(asOf now: Date) -> Bool { endDate <= now }
 }
 
+/// The Dock badge deliberately uses the same records and rules as the visible
+/// feedback column. That keeps its number understandable: it is never a wider
+/// scan of hidden calendars or old months.
+enum FeedbackCounter {
+    static func uncheckedCount(records: [EventOccurrenceRecord], now: Date,
+                               countShortEvents: Bool,
+                               isChecked: (EventOccurrenceRecord) -> Bool) -> Int {
+        records.reduce(into: 0) { count, record in
+            guard record.hasFinished(asOf: now),
+                  (countShortEvents || !record.isShort),
+                  !isChecked(record)
+            else { return }
+            count += 1
+        }
+    }
+}
+
 enum SeriesKey {
     /// Reduces an EventKit identifier to the thing that identifies the *series*.
     ///

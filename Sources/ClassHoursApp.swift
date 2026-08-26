@@ -1,7 +1,46 @@
 import SwiftUI
+import AppKit
+
+/// Keeps the single main window alive when its close button is pressed. This
+/// follows the usual menu-bar/Dock pattern: close hides it; clicking the Dock
+/// icon brings the same window forward; Command-Q still quits the app.
+final class AppLifecycle: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private weak var mainWindow: NSWindow?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in self?.adoptMainWindow() }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        adoptMainWindow()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag else { return true }
+        adoptMainWindow()
+        guard let mainWindow else { return true }
+        sender.activate(ignoringOtherApps: true)
+        mainWindow.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false
+    }
+
+    private func adoptMainWindow() {
+        guard let window = NSApplication.shared.windows.first(where: { $0.canBecomeMain }) else { return }
+        mainWindow = window
+        if window.delegate !== self { window.delegate = self }
+    }
+}
 
 @main
 struct ClassHoursApp: App {
+    @NSApplicationDelegateAdaptor(AppLifecycle.self) private var appLifecycle
     @StateObject private var state = AppState()
     @StateObject private var prefs = PrefsStore()
     @StateObject private var series = SeriesStore()
