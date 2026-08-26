@@ -218,6 +218,29 @@ extension AppState {
         branchOccurrences(of: event, scope: .wholeSeries).count
     }
 
+    /// Live occurrences across every member of the ClassHours series. This is
+    /// the series counterpart to `branchOccurrences` and lets the target
+    /// switch drive all ordinary edits without another branch/series prompt.
+    func seriesEventOccurrences(of event: EKEvent, scope: EditScope) -> [EKEvent] {
+        guard scope != .thisOccurrence else { return [event] }
+        let now = Date()
+        guard let lower = calculationCalendar.date(byAdding: .year, value: -3, to: now),
+              let upper = calculationCalendar.date(byAdding: .year, value: 5, to: now)
+        else { return [event] }
+        let from = scope == .thisAndFollowing ? max(event.startDate, lower) : lower
+        let calendars = self.calendars.compactMap { ekCalendar($0.id) }
+        guard !calendars.isEmpty else { return [event] }
+        let seriesKeys = Set(seriesLookup?(event.seriesKey) ?? [event.seriesKey])
+        let predicate = store.predicateForEvents(withStart: from, end: upper, calendars: calendars)
+        var seen = Set<String>()
+        let matched = store.events(matching: predicate).filter { candidate in
+            guard !candidate.isAllDay, candidate.status != .canceled,
+                  seriesKeys.contains(candidate.seriesKey) else { return false }
+            return seen.insert(EventMonthCalculator.occurrenceIdentity(candidate)).inserted
+        }
+        return matched.isEmpty ? [event] : matched.sorted { $0.startDate < $1.startDate }
+    }
+
     // MARK: Conflict preview
 
     func futureConflicts(for draft: SeriesDraft) -> [EventConflict] {
@@ -233,6 +256,10 @@ extension AppState {
             else { return nil }
             return (start, end)
         }
+        return futureConflicts(for: planned, excluding: [])
+    }
+
+    func futureConflicts(for planned: [(Date, Date)], excluding excludedIDs: Set<String>) -> [EventConflict] {
         guard let first = planned.map({ $0.0 }).min(), let last = planned.map({ $0.1 }).max() else { return [] }
 
         let calendars = self.calendars.compactMap { ekCalendar($0.id) }
@@ -245,6 +272,7 @@ extension AppState {
                   end > Date(), planned.contains(where: { start < $0.1 && end > $0.0 })
             else { return nil }
             let id = EventMonthCalculator.occurrenceIdentity(event)
+            guard !excludedIDs.contains(id) else { return nil }
             guard seen.insert(id).inserted else { return nil }
             let calendarID = event.calendar?.calendarIdentifier ?? ""
             return EventConflict(id: id,

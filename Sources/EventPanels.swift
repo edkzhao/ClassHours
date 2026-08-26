@@ -330,6 +330,7 @@ private struct PanelChrome<Content: View, Footer: View>: View {
 // MARK: - Detail
 
 private enum EditTarget: Equatable { case branch, series }
+private enum DetailEndKind: Hashable { case after, on }
 
 struct EventDetailPanel: View {
     @EnvironmentObject private var state: AppState
@@ -344,8 +345,14 @@ struct EventDetailPanel: View {
     @State private var timeFocus = 0
     @State private var notes = SeriesNotes()
     @State private var loaded = false
-    @State private var targetPrompt: TargetPrompt?
     @State private var scopePrompt: ScopePrompt?
+    @State private var editTarget: EditTarget = .series
+    @State private var repeatEndKind: DetailEndKind = .on
+    @State private var repeatCount = 1
+    @State private var repeatUntil = Date()
+    @State private var originalRepeatEnd: SeriesEnd?
+    @State private var openRepeatEnd = false
+    @State private var conflictPreview: [EventConflict] = []
     /// What was on screen when the panel opened, so an untouched Save can just
     /// close instead of asking which occurrences to apply nothing to.
     @State private var original: (title: String, date: Date, span: TimeSpan, notes: SeriesNotes, calendarID: String)?
@@ -355,10 +362,8 @@ struct EventDetailPanel: View {
     @State private var remaining = 0
     @State private var seriesMinutes = 0
     @State private var branchCount = 1
-    @State private var branchLabel = "This branch"
     @State private var openDate = false
 
-    private struct TargetPrompt: Identifiable { let id = UUID(); let deleting: Bool }
     private struct ScopePrompt: Identifiable {
         let id = UUID()
         let deleting: Bool
@@ -383,6 +388,12 @@ struct EventDetailPanel: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Eyebrow(text: "Event")
                         TextField("", text: $title).textFieldStyle(.roundedBorder)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Eyebrow(text: "Apply to")
+                        SegmentedChoice(options: [(EditTarget.series, "Series"),
+                                                  (EditTarget.branch, "Branch")],
+                                        selection: $editTarget)
                     }
                 }
 
@@ -414,6 +425,43 @@ struct EventDetailPanel: View {
                     }
                 }
 
+                field("Repeats") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .bottom, spacing: 10) {
+                            Picker("", selection: $repeatEndKind) {
+                                Text("After").tag(DetailEndKind.after)
+                                Text("On").tag(DetailEndKind.on)
+                            }
+                            .labelsHidden().pickerStyle(.menu).frame(width: 82)
+
+                            if repeatEndKind == .after {
+                                TextField("", value: $repeatCount, format: .number)
+                                    .textFieldStyle(.roundedBorder).frame(width: 62)
+                                Text("occurrences").font(Typo.sans(12)).foregroundStyle(Palette.ink3)
+                            } else {
+                                DateField(date: repeatUntil, open: openRepeatEnd) {
+                                    openRepeatEnd.toggle()
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        if openRepeatEnd {
+                            DatePicker("", selection: $repeatUntil, displayedComponents: .date)
+                                .datePickerStyle(.graphical)
+                                .labelsHidden()
+                                .padding(8)
+                                .frame(maxWidth: .infinity)
+                                .background(Palette.surface2)
+                                .overlay(RoundedRectangle(cornerRadius: 9)
+                                    .strokeBorder(Palette.rule, lineWidth: 1))
+                                .clipShape(RoundedRectangle(cornerRadius: 9))
+                                .onChange(of: repeatUntil) { _, _ in openRepeatEnd = false }
+                        }
+                    }
+                }
+
+                if !conflictPreview.isEmpty { editConflictList }
+
                 HStack(spacing: 8) {
                     SeriesStat(value: "\(position) / \(seriesCount)", label: "In series")
                     SeriesStat(value: "\(remaining)", label: "Remaining", alert: true)
@@ -427,18 +475,7 @@ struct EventDetailPanel: View {
                 RoleMenus(calendarID: calendarID, notes: $notes)
             }
         } footer: {
-            if let prompt = targetPrompt {
-                BranchOrSeriesChooser(
-                    deleting: prompt.deleting,
-                    branchLabel: branchLabel,
-                    branchCount: branchCount,
-                    seriesCount: seriesCount,
-                    onChoose: { target in
-                        targetPrompt = nil
-                        scopePrompt = ScopePrompt(deleting: prompt.deleting, target: target)
-                    },
-                    onCancel: { targetPrompt = nil })
-            } else if let prompt = scopePrompt {
+            if let prompt = scopePrompt {
                 // Inline rather than a sheet: this panel already lives inside an
                 // overlay of a view that presents sheets, and the nested
                 // presentation silently never appeared.
@@ -451,16 +488,30 @@ struct EventDetailPanel: View {
                     onClose()
                 } onCancel: { scopePrompt = nil }
             } else {
-                Button("Delete…") { targetPrompt = TargetPrompt(deleting: true) }
+                Button("Delete…") {
+                    scopePrompt = ScopePrompt(deleting: true, target: editTarget)
+                }
                     .buttonStyle(.plain)
                     .foregroundStyle(Palette.mark)
                 Spacer()
                 AccentButton(title: isDirty ? "Save…" : "Done") {
-                    if isDirty { targetPrompt = TargetPrompt(deleting: false) } else { onClose() }
+                    if repeatIsDirty && !ordinaryIsDirty {
+                        applyRepeatOnly()
+                    } else if ordinaryIsDirty {
+                        scopePrompt = ScopePrompt(deleting: false, target: editTarget)
+                    } else {
+                        onClose()
+                    }
                 }
             }
         }
         .onAppear(perform: load)
+        .onChange(of: editTarget) { _, _ in
+            guard loaded else { return }
+            loadRepeatBoundary()
+            refreshEditConflicts()
+        }
+        .onChange(of: editConflictFingerprint) { _, _ in refreshEditConflicts() }
     }
 
     @ViewBuilder
@@ -468,7 +519,7 @@ struct EventDetailPanel: View {
         VStack(alignment: .leading, spacing: 5) { Eyebrow(text: label); content() }
     }
 
-    private var isDirty: Bool {
+    private var ordinaryIsDirty: Bool {
         guard let o = original else { return false }
         return o.0 != title
             || !cal.isDate(o.date, inSameDayAs: date)
@@ -476,6 +527,13 @@ struct EventDetailPanel: View {
             || o.notes != notes
             || o.calendarID != calendarID
     }
+
+    private var selectedRepeatEnd: SeriesEnd {
+        repeatEndKind == .after ? .count(max(1, repeatCount)) : .until(repeatUntil)
+    }
+
+    private var repeatIsDirty: Bool { originalRepeatEnd != selectedRepeatEnd }
+    private var isDirty: Bool { ordinaryIsDirty || repeatIsDirty }
 
     private func load() {
         guard !loaded, let ev = state.event(forKey: occurrenceKey) else { return }
@@ -489,7 +547,6 @@ struct EventDetailPanel: View {
         notes = SeriesNotes.decode(ev.notes)
         calendarID = ev.calendar?.calendarIdentifier ?? ""
         original = (title, date, span, notes, calendarID)
-        branchLabel = BranchSignature(start: ev.startDate, end: ev.endDate, calendar: cal)?.label(calendar: cal) ?? "This branch"
 
         // Series figures come from ClassHours membership, so events at
         // different times and durations still count as one series.
@@ -500,6 +557,207 @@ struct EventDetailPanel: View {
             remaining = all.filter { $0.start > ev.startDate }.count
             seriesMinutes = all.reduce(0) { $0 + $1.minutes }
             branchCount = state.branchOccurrenceCount(of: ev)
+        }
+        loadRepeatBoundary()
+        refreshEditConflicts()
+    }
+
+    private func targetOccurrences(_ event: EKEvent, scope: EditScope = .wholeSeries) -> [EKEvent] {
+        editTarget == .branch
+            ? state.branchOccurrences(of: event, scope: scope)
+            : state.seriesEventOccurrences(of: event, scope: scope)
+    }
+
+    private func targetMasters(_ event: EKEvent) -> [EKEvent] {
+        let keys = Set(targetOccurrences(event).map(\.seriesKey))
+        var seen = Set<String>()
+        return keys.compactMap { key in
+            let candidates = state.store.calendarItems(withExternalIdentifier: key).compactMap { $0 as? EKEvent }
+            let master = candidates.first(where: { $0.hasRecurrenceRules })
+                ?? candidates.min(by: { $0.startDate < $1.startDate })
+                ?? state.store.event(withIdentifier: key)
+            guard let master, seen.insert(master.seriesKey).inserted else { return nil }
+            return master
+        }
+        .sorted { $0.startDate < $1.startDate }
+    }
+
+    private func repeatPatterns(for event: EKEvent) -> [WeeklyRepeatPattern] {
+        let selectedWeekday = cal.component(.weekday, from: event.startDate)
+        return targetMasters(event).map { master in
+            let ruleDays = master.recurrenceRules?.flatMap { rule in
+                rule.daysOfTheWeek?.map { $0.dayOfTheWeek.rawValue } ?? []
+            } ?? []
+            let weekdays = editTarget == .branch
+                ? Set([selectedWeekday])
+                : Set(ruleDays.isEmpty ? [cal.component(.weekday, from: master.startDate)] : ruleDays)
+            return WeeklyRepeatPattern(
+                id: master.seriesKey,
+                firstStart: master.startDate,
+                weekdays: weekdays,
+                startMinutes: TimeText.minutes(of: master.startDate, cal),
+                durationMinutes: max(1, Int(master.endDate.timeIntervalSince(master.startDate) / 60)))
+        }
+    }
+
+    private func loadRepeatBoundary() {
+        guard let event = state.event(forKey: occurrenceKey) else { return }
+        let occurrences = targetOccurrences(event)
+        repeatCount = max(1, occurrences.count)
+        repeatUntil = occurrences.map(\.startDate).max().map { cal.startOfDay(for: $0) }
+            ?? cal.startOfDay(for: event.startDate)
+        repeatEndKind = .on
+        originalRepeatEnd = .until(repeatUntil)
+    }
+
+    private func applyRepeatOnly() {
+        guard let event = state.event(forKey: occurrenceKey) else { return }
+        do {
+            try applyRepeatBoundary(to: event)
+            state.refresh()
+            state.refreshRemainingCounts()
+            onClose()
+        } catch {
+            state.reportError(error.localizedDescription)
+        }
+    }
+
+    private func applyRepeatBoundary(to event: EKEvent) throws {
+        guard repeatIsDirty else { return }
+        let writer = CalendarWriter(store: state.store, calendar: cal)
+        let masters = targetMasters(event)
+        let byKey = Dictionary(uniqueKeysWithValues: masters.map { ($0.seriesKey, $0) })
+        let branchSignature = BranchSignature(start: event.startDate, end: event.endDate, calendar: cal)
+        switch selectedRepeatEnd {
+        case .until(let date):
+            for master in masters {
+                if editTarget == .branch, recurrenceWeekdays(master).count > 1,
+                   let branchSignature {
+                    try reconcileSharedRecurrence(master, signature: branchSignature,
+                                                  end: .until(date), writer: writer)
+                } else {
+                    try writer.updateRecurrenceEnd(master, end: .until(date))
+                }
+            }
+        case .count(let total):
+            let allocations = RepeatPlanner.countsByPattern(
+                patterns: repeatPatterns(for: event), total: total, calendar: cal)
+            for (key, master) in byKey {
+                let count = allocations[key] ?? 0
+                if editTarget == .branch, recurrenceWeekdays(master).count > 1,
+                   let branchSignature {
+                    try reconcileSharedRecurrence(master, signature: branchSignature,
+                                                  count: count, writer: writer)
+                } else if count > 0 {
+                    try writer.updateRecurrenceEnd(master, end: .count(count))
+                } else {
+                    series.ungroup(master.seriesKey)
+                    try writer.delete(master, scope: .wholeSeries)
+                }
+            }
+        }
+    }
+
+    private func recurrenceWeekdays(_ event: EKEvent) -> Set<Int> {
+        let days = event.recurrenceRules?.flatMap { rule in
+            rule.daysOfTheWeek?.map { $0.dayOfTheWeek.rawValue } ?? []
+        } ?? []
+        return Set(days.isEmpty ? [cal.component(.weekday, from: event.startDate)] : days)
+    }
+
+    private func underlyingOccurrences(_ master: EKEvent, through upper: Date) -> [EKEvent] {
+        guard let calendar = master.calendar, let masterStart = master.startDate else { return [] }
+        let lower = cal.date(byAdding: .day, value: -1, to: masterStart) ?? masterStart
+        let end = cal.date(byAdding: .day, value: 1, to: upper) ?? upper
+        let key = master.seriesKey
+        return state.store.events(matching: state.store.predicateForEvents(
+            withStart: lower, end: end, calendars: [calendar]))
+            .filter { $0.seriesKey == key && !$0.isAllDay && $0.status != .canceled }
+            .sorted { $0.startDate < $1.startDate }
+    }
+
+    private func reconcileSharedRecurrence(_ master: EKEvent, signature: BranchSignature,
+                                           end: SeriesEnd, writer: CalendarWriter) throws {
+        let pattern = WeeklyRepeatPattern(id: master.seriesKey,
+                                          firstStart: master.startDate,
+                                          weekdays: [signature.weekday],
+                                          startMinutes: signature.startMinutes,
+                                          durationMinutes: signature.durationMinutes)
+        let desired = RepeatPlanner.occurrences(patterns: [pattern], end: end, calendar: cal)
+        try reconcileSharedRecurrence(master, signature: signature, desired: desired, writer: writer)
+    }
+
+    private func reconcileSharedRecurrence(_ master: EKEvent, signature: BranchSignature,
+                                           count: Int, writer: CalendarWriter) throws {
+        let desired: [PlannedRepeatOccurrence]
+        if count > 0 {
+            let pattern = WeeklyRepeatPattern(id: master.seriesKey,
+                                              firstStart: master.startDate,
+                                              weekdays: [signature.weekday],
+                                              startMinutes: signature.startMinutes,
+                                              durationMinutes: signature.durationMinutes)
+            desired = RepeatPlanner.occurrences(patterns: [pattern], end: .count(count), calendar: cal)
+        } else {
+            desired = []
+        }
+        try reconcileSharedRecurrence(master, signature: signature, desired: desired, writer: writer)
+    }
+
+    /// Older ClassHours builds could put several weekdays into one EventKit
+    /// recurrence. Reconcile only the chosen weekday with exceptions and
+    /// one-offs, preserving the other weekdays and their existing boundaries.
+    private func reconcileSharedRecurrence(_ master: EKEvent, signature: BranchSignature,
+                                           desired: [PlannedRepeatOccurrence],
+                                           writer: CalendarWriter) throws {
+        guard let masterStart = master.startDate else { return }
+        let fallbackUpper = cal.date(byAdding: .year, value: 5, to: Date()) ?? Date()
+        let desiredLastStart = desired.map(\.start).max() ?? masterStart
+        let desiredLast = desired.map(\.end).max() ?? masterStart
+        let initialUpper = max(fallbackUpper, desiredLast)
+        let before = underlyingOccurrences(master, through: initialUpper)
+        var lastByOtherBranch: [BranchSignature: Date] = [:]
+        for occurrence in before {
+            guard let start = occurrence.startDate, let end = occurrence.endDate,
+                  let branch = BranchSignature(start: start, end: end, calendar: cal),
+                  branch != signature else { continue }
+            lastByOtherBranch[branch] = max(lastByOtherBranch[branch] ?? .distantPast, start)
+        }
+
+        let overallLast = before.compactMap { $0.startDate }.max() ?? masterStart
+        let extendedRule = !desired.isEmpty && desiredLastStart > overallLast
+        if extendedRule { try writer.updateRecurrenceEnd(master, end: .until(desiredLast)) }
+
+        let fresh = underlyingOccurrences(master, through: initialUpper)
+        let desiredKeys = Set(desired.map { EventMonthCalculator.dateIdentity($0.start) })
+        var liveSelected: [String: EKEvent] = [:]
+        for occurrence in fresh {
+            guard let start = occurrence.startDate, let finish = occurrence.endDate,
+                  let branch = BranchSignature(start: start, end: finish, calendar: cal)
+            else { continue }
+            let key = EventMonthCalculator.dateIdentity(start)
+            if branch == signature {
+                if desiredKeys.contains(key) {
+                    liveSelected[key] = occurrence
+                } else {
+                    try writer.delete(occurrence, scope: .thisOccurrence)
+                }
+            } else if extendedRule, start > (lastByOtherBranch[branch] ?? .distantPast) {
+                // Extending the shared rule also materialises its other
+                // weekdays. Remove only those newly introduced occurrences.
+                try writer.delete(occurrence, scope: .thisOccurrence)
+            }
+        }
+
+        var createdKeys: [String] = []
+        for occurrence in desired where liveSelected[EventMonthCalculator.dateIdentity(occurrence.start)] == nil {
+            let created = try writer.createOccurrence(copying: master,
+                                                      start: occurrence.start,
+                                                      end: occurrence.end)
+            createdKeys.append(created.seriesKey)
+        }
+        if !createdKeys.isEmpty {
+            let existing = series.seriesID(of: master.seriesKey)
+            _ = series.group(createdKeys + [master.seriesKey], into: existing)
         }
     }
 
@@ -514,6 +772,10 @@ struct EventDetailPanel: View {
         // when it rewrites an event, which silently dropped it out of its series.
         let seriesBefore = series.seriesID(of: ev.seriesKey)
         do {
+            // The repeat boundary belongs to the target as it existed when the
+            // panel opened. Apply it before time edits create detached EventKit
+            // occurrences or calendar moves reissue identifiers.
+            if !deleting { try applyRepeatBoundary(to: ev) }
             if target == .branch {
                 try applyBranch(ev, scope: scope, deleting: deleting, writer: writer,
                                 targetCalendar: targetCalendar)
@@ -532,36 +794,24 @@ struct EventDetailPanel: View {
 
     private func applySeries(_ event: EKEvent, scope: EditScope, deleting: Bool,
                              writer: CalendarWriter, targetCalendar: EKCalendar) throws {
-        if deleting {
-            series.ungroup(event.seriesKey)
-            try writer.delete(event, scope: scope)
-            return
-        }
-
-        let (start, end, movedInTime) = editedTimes(for: event, day: date)
-        try writer.update(event, scope: scope, title: title,
-                          start: movedInTime ? start : nil, end: movedInTime ? end : nil,
-                          notes: notes, calendar: targetCalendar)
-        guard scope == .wholeSeries else { return }
-
-        // Notes and calendar membership are properties of the ClassHours
-        // series, even when it is represented by several EventKit recurrences.
-        let mine = event.seriesKey
-        var before: [AppState.SeriesUndo.Member] = []
-        for sibling in series.siblings(of: mine) where sibling != mine {
-            guard let other = state.store.calendarItems(withExternalIdentifier: sibling).first as? EKEvent
-                    ?? state.store.event(withIdentifier: sibling) else { continue }
-            before.append(.init(key: sibling, title: other.title ?? "", notes: other.notes ?? ""))
-            other.title = title
-            other.notes = notes.encoded()
-            if original?.calendarID != calendarID { other.calendar = targetCalendar }
-            try state.store.save(other,
-                                 span: other.hasRecurrenceRules ? .futureEvents : .thisEvent,
-                                 commit: false)
-        }
-        if !before.isEmpty {
-            try state.store.commit()
-            state.offerUndo(.init(message: "Updated \(before.count + 1) events in the series", members: before))
+        let matches = state.seriesEventOccurrences(of: event, scope: scope)
+        let dayShift = original.map {
+            cal.dateComponents([.day], from: cal.startOfDay(for: $0.date), to: cal.startOfDay(for: date)).day ?? 0
+        } ?? 0
+        for match in matches {
+            if deleting {
+                series.ungroup(match.seriesKey)
+                try writer.delete(match, scope: .thisOccurrence)
+                continue
+            }
+            let baseDay = scope == .thisOccurrence
+                ? date
+                : (match.startDate.flatMap { cal.date(byAdding: .day, value: dayShift, to: $0) }
+                   ?? match.startDate ?? date)
+            let (start, end, movedInTime) = editedTimes(for: match, day: baseDay)
+            try writer.update(match, scope: .thisOccurrence, title: title,
+                              start: movedInTime ? start : nil, end: movedInTime ? end : nil,
+                              notes: notes, calendar: targetCalendar)
         }
     }
 
@@ -614,6 +864,97 @@ struct EventDetailPanel: View {
         let moved = original.map { !cal.isDate($0.date, inSameDayAs: date) || $0.span != span } ?? true
         return (start, end, moved)
     }
+
+    private var scheduleIsDirty: Bool {
+        guard let original else { return false }
+        return !cal.isDate(original.date, inSameDayAs: date)
+            || original.span != span
+            || repeatIsDirty
+    }
+
+    private var editConflictFingerprint: String {
+        "\(editTarget)|\(date.timeIntervalSinceReferenceDate)|\(span.start ?? -1)|\(span.resolvedEnd ?? -1)|\(repeatEndKind)|\(repeatCount)|\(repeatUntil.timeIntervalSinceReferenceDate)"
+    }
+
+    private func refreshEditConflicts() {
+        guard loaded, scheduleIsDirty, let event = state.event(forKey: occurrenceKey) else {
+            conflictPreview = []
+            return
+        }
+        let existing = targetOccurrences(event)
+        let excluded = Set(existing.map(EventMonthCalculator.occurrenceIdentity))
+        let base: [(Date, Date)]
+        if repeatIsDirty {
+            base = RepeatPlanner.occurrences(patterns: repeatPatterns(for: event),
+                                             end: selectedRepeatEnd,
+                                             calendar: cal)
+                .map { ($0.start, $0.end) }
+        } else {
+            base = existing.compactMap { occurrence in
+                guard let start = occurrence.startDate, let end = occurrence.endDate else { return nil }
+                return (start, end)
+            }
+        }
+
+        let dayShift = original.map {
+            cal.dateComponents([.day], from: cal.startOfDay(for: $0.date), to: cal.startOfDay(for: date)).day ?? 0
+        } ?? 0
+        let movedInTime = original.map { $0.span != span || !cal.isDate($0.date, inSameDayAs: date) } ?? true
+        let planned = base.compactMap { oldStart, oldEnd -> (Date, Date)? in
+            guard movedInTime else { return oldEnd > Date() ? (oldStart, oldEnd) : nil }
+            let shiftedDay = cal.date(byAdding: .day, value: dayShift, to: oldStart) ?? oldStart
+            let day = cal.startOfDay(for: shiftedDay)
+            guard let startMinutes = span.start,
+                  let endMinutes = span.resolvedEnd,
+                  let newStart = cal.date(byAdding: .minute, value: startMinutes, to: day),
+                  let newEnd = cal.date(byAdding: .minute, value: endMinutes, to: day),
+                  newEnd > Date()
+            else { return nil }
+            return (newStart, newEnd)
+        }
+        conflictPreview = state.futureConflicts(for: planned, excluding: excluded)
+    }
+
+    private var editConflictList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.mark)
+                Eyebrow(text: "Conflicts")
+                Spacer()
+                Text("\(conflictPreview.count)")
+                    .font(Typo.mono(10.5)).foregroundStyle(Palette.ink3)
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 5) {
+                    ForEach(conflictPreview.prefix(200)) { item in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title).font(Typo.sans(12.5, .medium)).lineLimit(1)
+                            Text("\(detailDateLabel(item.start)) · \(TimeText.hhmm(TimeText.minutes(of: item.start, cal)))–\(TimeText.hhmm(TimeText.minutes(of: item.end, cal))) · \(item.calendarTitle)")
+                                .font(Typo.mono(10.5)).foregroundStyle(Palette.ink3).lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 2)
+                    }
+                    if conflictPreview.count > 200 {
+                        Text("+ \(conflictPreview.count - 200) more")
+                            .font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
+                    }
+                }
+            }
+            .frame(maxHeight: 170)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.surface2)
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Palette.rule, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func detailDateLabel(_ date: Date) -> String {
+        let weekday = cal.shortWeekdaySymbols[cal.component(.weekday, from: date) - 1]
+        let month = cal.shortMonthSymbols[cal.component(.month, from: date) - 1]
+        return String(format: "%@ %02d %@", weekday, cal.component(.day, from: date), month)
+    }
 }
 
 // MARK: - Scope sheet
@@ -653,46 +994,6 @@ struct ScopeChooser: View {
                 if !detail.isEmpty {
                     Text(detail).font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(Palette.surface2)
-            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Palette.rule, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 9))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct BranchOrSeriesChooser: View {
-    let deleting: Bool
-    let branchLabel: String
-    let branchCount: Int
-    let seriesCount: Int
-    let onChoose: (EditTarget) -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(deleting ? "Delete from…" : "Apply changes to…")
-                    .font(Typo.sans(13, .semibold))
-                Spacer()
-                Button("Cancel", action: onCancel).buttonStyle(.plain)
-                    .font(Typo.sans(12)).foregroundStyle(Palette.ink3)
-            }
-            choice(.branch, "This branch", "\(branchLabel) · \(branchCount) occurrence\(branchCount == 1 ? "" : "s")")
-            choice(.series, "The series", "All linked schedules; choose a scope next.")
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func choice(_ target: EditTarget, _ title: String, _ detail: String) -> some View {
-        Button { onChoose(target) } label: {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(Typo.sans(13.5, .semibold))
-                    .foregroundStyle(deleting ? Palette.mark : Palette.ink)
-                Text(detail).font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12).padding(.vertical, 9)
@@ -1073,24 +1374,28 @@ struct ComposerPanel: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(Palette.mark)
                 Eyebrow(text: "Conflicts with future events")
+                Spacer()
+                Text("\(conflictPreview.count)")
+                    .font(Typo.mono(10.5)).foregroundStyle(Palette.ink3)
             }
-            Text("These overlaps will not block creation.")
-                .font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
-            ForEach(conflictPreview.prefix(6)) { item in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(item.title).font(Typo.sans(12.5, .medium)).lineLimit(1)
-                        Text("\(dateLabel(item.start)) · \(TimeText.hhmm(TimeText.minutes(of: item.start, cal)))–\(TimeText.hhmm(TimeText.minutes(of: item.end, cal))) · \(item.calendarTitle)")
-                            .font(Typo.mono(10.5)).foregroundStyle(Palette.ink3).lineLimit(1)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 5) {
+                    ForEach(conflictPreview.prefix(200)) { item in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title).font(Typo.sans(12.5, .medium)).lineLimit(1)
+                            Text("\(dateLabel(item.start)) · \(TimeText.hhmm(TimeText.minutes(of: item.start, cal)))–\(TimeText.hhmm(TimeText.minutes(of: item.end, cal))) · \(item.calendarTitle)")
+                                .font(Typo.mono(10.5)).foregroundStyle(Palette.ink3).lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 2)
                     }
-                    Spacer(minLength: 0)
+                    if conflictPreview.count > 200 {
+                        Text("+ \(conflictPreview.count - 200) more")
+                            .font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
+                    }
                 }
-                .padding(.vertical, 2)
             }
-            if conflictPreview.count > 6 {
-                Text("+ \(conflictPreview.count - 6) more")
-                    .font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
-            }
+            .frame(maxHeight: 170)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1203,18 +1508,22 @@ private struct SlotRow: View {
             HStack(spacing: 2) {
                 ForEach(order, id: \.self) { wd in
                     let on = slot.weekdays.contains(wd)
-                    Button(letters[wd - 1]) {
+                    Button {
                         // Clearing the last day is allowed; Create is what
                         // guards against an empty draft.
                         if on { slot.weekdays.remove(wd) } else { slot.weekdays.insert(wd) }
+                    } label: {
+                        Text(letters[wd - 1])
+                            .font(Typo.sans(11, .semibold))
+                            .foregroundStyle(on ? .white : Palette.ink3)
+                            .frame(width: 18, height: 24)
+                            .background(on ? Palette.railA : Palette.surface2)
+                            .overlay(RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(on ? .clear : Palette.rule, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .font(Typo.sans(11, .semibold))
-                    .foregroundStyle(on ? .white : Palette.ink3)
-                    .frame(width: 18, height: 24)
-                    .background(on ? Palette.railA : Palette.surface2)
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(on ? .clear : Palette.rule, lineWidth: 1))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             }
             Rectangle()

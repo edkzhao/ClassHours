@@ -155,6 +155,75 @@ struct EventConflict: Identifiable, Hashable {
     let calendarTitle: String
 }
 
+/// One weekly line used when previewing or redistributing a repeat boundary.
+/// Several patterns may share an id when one EventKit recurrence contains
+/// more than one weekday.
+struct WeeklyRepeatPattern: Hashable {
+    let id: String
+    let firstStart: Date
+    let weekdays: Set<Int>
+    let startMinutes: Int
+    let durationMinutes: Int
+}
+
+struct PlannedRepeatOccurrence: Hashable {
+    let patternID: String
+    let start: Date
+    let end: Date
+}
+
+enum RepeatPlanner {
+    /// Expands the same weekly model used by New Event. A count is global
+    /// across all supplied patterns, while an end date is inclusive.
+    static func occurrences(patterns: [WeeklyRepeatPattern], end: SeriesEnd,
+                            calendar: Calendar, limit: Int = 400) -> [PlannedRepeatOccurrence] {
+        guard !patterns.isEmpty else { return [] }
+        let wanted: Int
+        let lastDay: Date?
+        switch end {
+        case .count(let count):
+            wanted = min(limit, max(1, count))
+            lastDay = nil
+        case .until(let date):
+            wanted = limit
+            lastDay = calendar.startOfDay(for: date)
+        }
+
+        let ordered = patterns.sorted {
+            if $0.startMinutes != $1.startMinutes { return $0.startMinutes < $1.startMinutes }
+            return $0.id < $1.id
+        }
+        var cursor = ordered.map { calendar.startOfDay(for: $0.firstStart) }.min()!
+        var output: [PlannedRepeatOccurrence] = []
+        var guardDays = 0
+        while output.count < wanted && guardDays < 2_800 {
+            guardDays += 1
+            if let lastDay, cursor > lastDay { break }
+            let weekday = calendar.component(.weekday, from: cursor)
+            for pattern in ordered where pattern.weekdays.contains(weekday)
+                && cursor >= calendar.startOfDay(for: pattern.firstStart) {
+                if output.count >= wanted { break }
+                guard let start = calendar.date(byAdding: .minute, value: pattern.startMinutes, to: cursor),
+                      let finish = calendar.date(byAdding: .minute,
+                                                 value: pattern.startMinutes + pattern.durationMinutes,
+                                                 to: cursor)
+                else { continue }
+                output.append(.init(patternID: pattern.id, start: start, end: finish))
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+        return output.sorted { $0.start < $1.start }
+    }
+
+    static func countsByPattern(patterns: [WeeklyRepeatPattern], total: Int,
+                                calendar: Calendar) -> [String: Int] {
+        Dictionary(grouping: occurrences(patterns: patterns, end: .count(total), calendar: calendar),
+                   by: \.patternID)
+            .mapValues(\.count)
+    }
+}
+
 enum DurationFormatter {
     /// "1h 30m" / "45m"
     static func string(_ seconds: Int) -> String {

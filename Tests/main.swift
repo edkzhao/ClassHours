@@ -185,6 +185,22 @@ check("different duration stays another branch", "\(branch.matches(start: date(2
 let movedBranch = BranchSignature(start: date(2026, 8, 6, 8, 0), end: date(2026, 8, 6, 10, 0), calendar: cal)!
 check("destination time identifies an existing one-off", "\(movedBranch.matches(start: date(2026, 8, 13, 8, 0), end: date(2026, 8, 13, 10, 0), calendar: cal))", "true")
 
+print("\nRepeat editing allocates a series count chronologically")
+let mondayPattern = WeeklyRepeatPattern(id: "monday", firstStart: date(2026, 8, 3, 8, 0),
+                                        weekdays: [2], startMinutes: 8 * 60, durationMinutes: 120)
+let wednesdayPattern = WeeklyRepeatPattern(id: "wednesday", firstStart: date(2026, 8, 5, 8, 0),
+                                           weekdays: [4], startMinutes: 8 * 60, durationMinutes: 120)
+let repeatEight = RepeatPlanner.occurrences(patterns: [mondayPattern, wednesdayPattern],
+                                            end: .count(8), calendar: cal)
+check("series total is eight", "\(repeatEight.count)", "8")
+let allocated = RepeatPlanner.countsByPattern(patterns: [mondayPattern, wednesdayPattern],
+                                              total: 8, calendar: cal)
+check("four Mondays are retained", "\(allocated["monday"] ?? 0)", "4")
+check("four Wednesdays are retained", "\(allocated["wednesday"] ?? 0)", "4")
+let mondayEight = RepeatPlanner.occurrences(patterns: [mondayPattern], end: .count(8), calendar: cal)
+check("branch count is independent", "\(mondayEight.count)", "8")
+check("eighth Monday lands in September", "\(cal.component(.day, from: mondayEight.last!.start))", "21")
+
 print("\nDuration formatting")
 check("90 min",  DurationFormatter.string(90 * 60),  "1h 30m")
 check("60 min",  DurationFormatter.string(60 * 60),  "1h 00m")

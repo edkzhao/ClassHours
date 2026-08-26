@@ -39,29 +39,31 @@ struct CalendarWriter {
         }
 
         for slot in draft.slots where slot.isComplete {
-            let mine = expanded.filter { $0.id == slot.id }
-            guard let first = mine.first, let last = mine.last else { continue }
-
-            let event = newEvent(draft, in: ekCalendar, on: first.date, span: slot.span)
-
-            if mine.count > 1 {
-                let days = slot.weekdays.sorted().compactMap { wd -> EKRecurrenceDayOfWeek? in
-                    guard let d = EKWeekday(rawValue: wd) else { return nil }
-                    return EKRecurrenceDayOfWeek(d)
+            // One EventKit recurrence per weekday. ClassHours still groups
+            // them as one series, but a later Branch edit can now change one
+            // weekday's boundary without touching the others.
+            for weekday in slot.weekdays.sorted() {
+                let mine = expanded.filter {
+                    $0.id == slot.id && calendar.component(.weekday, from: $0.date) == weekday
                 }
-                // End on this slot's own last date, so the occurrence count is
-                // exact even when slots fall on different weekdays.
-                let end = EKRecurrenceEnd(end: endDate(last.date, span: slot.span))
-                let rule = EKRecurrenceRule(recurrenceWith: .weekly, interval: 1,
-                                            daysOfTheWeek: days, daysOfTheMonth: nil,
-                                            monthsOfTheYear: nil, weeksOfTheYear: nil,
-                                            daysOfTheYear: nil, setPositions: nil, end: end)
-                event.recurrenceRules = [rule]
-            }
+                guard let first = mine.first, let last = mine.last else { continue }
 
-            try store.save(event, span: event.hasRecurrenceRules ? .futureEvents : .thisEvent,
-                           commit: false)
-            created.append(event)
+                let event = newEvent(draft, in: ekCalendar, on: first.date, span: slot.span)
+                if mine.count > 1, let day = EKWeekday(rawValue: weekday) {
+                    let end = EKRecurrenceEnd(end: endDate(last.date, span: slot.span))
+                    event.recurrenceRules = [
+                        EKRecurrenceRule(recurrenceWith: .weekly, interval: 1,
+                                         daysOfTheWeek: [EKRecurrenceDayOfWeek(day)],
+                                         daysOfTheMonth: nil, monthsOfTheYear: nil,
+                                         weeksOfTheYear: nil, daysOfTheYear: nil,
+                                         setPositions: nil, end: end)
+                    ]
+                }
+
+                try store.save(event, span: event.hasRecurrenceRules ? .futureEvents : .thisEvent,
+                               commit: false)
+                created.append(event)
+            }
         }
         try store.commit()
         return created
@@ -102,9 +104,55 @@ struct CalendarWriter {
         try store.save(target, span: span(for: target, scope: scope), commit: true)
     }
 
+    /// Replaces the repeat boundary for one EventKit recurrence. The caller
+    /// decides whether this recurrence represents a branch or a member of a
+    /// wider ClassHours series before invoking it.
+    func updateRecurrenceEnd(_ event: EKEvent, end: SeriesEnd) throws {
+        let target = try resolve(event, scope: .wholeSeries)
+        let wasRecurring = target.hasRecurrenceRules
+        let newEnd: EKRecurrenceEnd
+        switch end {
+        case .count(let count):
+            newEnd = EKRecurrenceEnd(occurrenceCount: max(1, count))
+        case .until(let date):
+            let day = calendar.startOfDay(for: date)
+            let inclusive = calendar.date(byAdding: .day, value: 1, to: day)?.addingTimeInterval(-1) ?? date
+            newEnd = EKRecurrenceEnd(end: inclusive)
+        }
+
+        if let rules = target.recurrenceRules, !rules.isEmpty {
+            target.recurrenceRules = rules.map { replacingEnd(of: $0, with: newEnd) }
+        } else {
+            let weekday = calendar.component(.weekday, from: target.startDate)
+            guard let ekWeekday = EKWeekday(rawValue: weekday) else { return }
+            target.recurrenceRules = [
+                EKRecurrenceRule(recurrenceWith: .weekly, interval: 1,
+                                 daysOfTheWeek: [EKRecurrenceDayOfWeek(ekWeekday)],
+                                 daysOfTheMonth: nil, monthsOfTheYear: nil,
+                                 weeksOfTheYear: nil, daysOfTheYear: nil,
+                                 setPositions: nil, end: newEnd)
+            ]
+        }
+        try store.save(target, span: wasRecurring ? .futureEvents : .thisEvent, commit: true)
+    }
+
     func delete(_ event: EKEvent, scope: EditScope) throws {
         let target = try resolve(event, scope: scope)
         try store.remove(target, span: span(for: target, scope: scope), commit: true)
+    }
+
+    @discardableResult
+    func createOccurrence(copying template: EKEvent, start: Date, end: Date) throws -> EKEvent {
+        let event = EKEvent(eventStore: store)
+        event.calendar = template.calendar
+        event.title = template.title
+        event.notes = template.notes
+        event.location = template.location
+        event.url = template.url
+        event.startDate = start
+        event.endDate = end
+        try store.save(event, span: .thisEvent, commit: true)
+        return event
     }
 
     /// `.futureEvents` truncates the recurrence and spawns a *new* event for the
@@ -114,6 +162,19 @@ struct CalendarWriter {
     private func span(for event: EKEvent, scope: EditScope) -> EKSpan {
         guard event.hasRecurrenceRules else { return .thisEvent }
         return scope == .thisOccurrence ? .thisEvent : .futureEvents
+    }
+
+    private func replacingEnd(of rule: EKRecurrenceRule,
+                              with end: EKRecurrenceEnd) -> EKRecurrenceRule {
+        EKRecurrenceRule(recurrenceWith: rule.frequency,
+                         interval: rule.interval,
+                         daysOfTheWeek: rule.daysOfTheWeek,
+                         daysOfTheMonth: rule.daysOfTheMonth,
+                         monthsOfTheYear: rule.monthsOfTheYear,
+                         weeksOfTheYear: rule.weeksOfTheYear,
+                         daysOfTheYear: rule.daysOfTheYear,
+                         setPositions: rule.setPositions,
+                         end: end)
     }
 
     /// "Whole series" means the first occurrence — EventKit has no all-events

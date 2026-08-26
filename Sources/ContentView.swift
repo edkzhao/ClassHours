@@ -100,11 +100,21 @@ struct ContentView: View {
             }
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: state.pendingUndo?.id)
-        .sheet(isPresented: $state.settingsShown) {
-            SettingsSheet()
-                .environmentObject(state)
-                .environmentObject(prefs)
-                .environmentObject(holidays)
+        .overlay {
+            if state.settingsShown {
+                ZStack {
+                    Color.black.opacity(0.10)
+                        .contentShape(Rectangle())
+                        .onTapGesture { state.settingsShown = false }
+                    SettingsSheet(onClose: { state.settingsShown = false })
+                        .environmentObject(state)
+                        .environmentObject(prefs)
+                        .environmentObject(holidays)
+                        .shadow(color: Color.black.opacity(0.16), radius: 18, y: 7)
+                }
+                .transition(.opacity)
+                .zIndex(20)
+            }
         }
         // Presented at the root so it is reachable from either page.
         .sheet(item: Binding(get: { state.calendarSettingsFor.map(IdentifiedString.init) },
@@ -131,6 +141,9 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openTidyUp)) { _ in
             tidyUpShown = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            if state.settingsShown { state.settingsShown = false }
         }
         .sheet(isPresented: $tidyUpShown) {
             TidyUpSheet().environmentObject(state).environmentObject(series)

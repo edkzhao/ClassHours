@@ -30,7 +30,7 @@ struct SettingsSheet: View {
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var prefs: PrefsStore
     @EnvironmentObject private var holidays: HolidayStore
-    @Environment(\.dismiss) private var dismiss
+    let onClose: () -> Void
 
     enum Group: String, CaseIterable, Identifiable, Hashable {
         case timeRange = "Time Range"
@@ -81,7 +81,7 @@ struct SettingsSheet: View {
                         .lineLimit(2)
                 }
                 Spacer()
-                AccentButton(title: "Done") { save(); dismiss() }
+                AccentButton(title: "Done", action: onClose)
             }
             .padding(.horizontal, 18).padding(.vertical, 12)
         }
@@ -95,6 +95,7 @@ struct SettingsSheet: View {
                 }
             }
         }
+        .onDisappear(perform: save)
     }
 
     // MARK: Rail
