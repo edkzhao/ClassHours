@@ -1,0 +1,301 @@
+<meta charset="utf-8">
+<title>ClassHours — Settings</title>
+<style>
+  :root{
+    --canvas:#F6F8F6; --surface:#fff; --surface2:#FAFCFA;
+    --rule:#E2E9E5; --ruleSoft:#EFF3F0;
+    --ink:#2A403C; --ink2:#5C7570; --ink3:#93A8A2;
+    --railA:#2F4F4A; --railB:#3A5E58; --readoutA:#2C4A46;
+    --accent:#E8B33C; --mark:#C97B4A; --mark40:#E9C3AC; --mark20:#F6E6DC;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#e9ece9;font-family:var(--sans);color:var(--ink);
+       -webkit-font-smoothing:antialiased;padding:30px 24px 70px}
+  h1{font-size:20px;font-weight:600;letter-spacing:-.3px;margin:0 0 6px}
+  .sub{color:var(--ink2);font-size:13px;margin:0 0 22px;max-width:74ch;line-height:1.55}
+  .eyebrow{font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:var(--ink3)}
+
+  /* ---- the sheet, at the size it would really be ---- */
+  .sheet{width:720px;height:620px;background:var(--canvas);border:1px solid #d7ded9;
+         border-radius:12px;overflow:hidden;display:flex;flex-direction:column;
+         box-shadow:0 18px 50px rgba(30,40,38,.20)}
+  .titlebar{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--rule);
+            background:var(--canvas)}
+  .titlebar b{font-size:15px;font-weight:600}
+  .body{flex:1;display:flex;min-height:0}
+
+  /* ---- rail ---- */
+  .rail{width:168px;flex:none;border-right:1px solid var(--rule);background:var(--surface2);
+        padding:12px 10px;display:flex;flex-direction:column;gap:2px}
+  .rail a{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;
+          font-size:13px;color:var(--ink2);text-decoration:none;cursor:pointer;user-select:none}
+  .rail a:hover{background:var(--ruleSoft)}
+  .rail a.on{background:var(--surface);color:var(--ink);font-weight:600;
+             box-shadow:0 1px 2px rgba(30,40,38,.08);border:1px solid var(--rule)}
+  .rail a i{width:15px;text-align:center;font-style:normal;font-size:12px;color:var(--ink3)}
+  .rail a.on i{color:var(--mark)}
+  .railnote{margin-top:auto;font-size:11px;color:var(--ink3);padding:8px 10px;line-height:1.45}
+
+  /* ---- content ---- */
+  .content{flex:1;overflow-y:auto;padding:18px;scroll-behavior:smooth}
+  section{margin-bottom:26px;scroll-margin-top:6px}
+  section>.eyebrow{display:block;margin-bottom:8px}
+  .hint{font-size:12px;color:var(--ink3);margin:0 0 10px;line-height:1.5}
+
+  .card{background:var(--surface);border:1px solid var(--rule);border-radius:10px}
+  .card .row{display:flex;align-items:center;gap:10px;padding:9px 12px}
+  .card .row + .row{border-top:1px solid var(--ruleSoft)}
+  .grow{flex:1;min-width:0}
+
+  /* segmented */
+  .seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--rule);border-radius:8px;
+       background:var(--surface2)}
+  .seg span{font-size:12.5px;font-weight:600;padding:5px 14px;border-radius:6px;color:var(--ink3);cursor:pointer}
+  .seg span.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(30,40,38,.10)}
+
+  /* time boxes */
+  .tbox{width:26px;padding:5px 2px;border:1px solid var(--rule);border-radius:6px;background:var(--surface2);
+        font:12.5px var(--mono);text-align:center;color:var(--ink)}
+  .tbox:focus{outline:none;background:var(--mark20);border-color:var(--mark40)}
+  .fixed{font:12.5px var(--mono);color:var(--ink3)}
+  .locked{font:13px var(--mono);color:var(--ink)}
+  .word{font-size:12px;color:var(--ink3)}
+  .btn{background:var(--accent);color:var(--readoutA);border:0;border-radius:8px;
+       padding:6px 14px;font:600 13px var(--sans);cursor:pointer}
+  .link{background:none;border:0;color:var(--mark);font:600 12px var(--sans);cursor:pointer;padding:2px 0}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .cal{font-size:13px}
+  .chk{width:13px;height:13px;accent-color:var(--railA)}
+  .mini{font-size:12px;color:var(--ink2);display:flex;align-items:center;gap:5px}
+  .arrows{display:flex;gap:2px}
+  .arrows button{width:22px;height:22px;border:0;background:none;color:var(--ink2);cursor:pointer;
+                 border-radius:6px;font-size:10px}
+  .arrows button:hover{background:var(--ruleSoft)}
+  .swatches{display:flex;gap:5px}
+  .swatches b{width:15px;height:15px;border-radius:50%;display:block;cursor:pointer}
+  .swatches b.on{outline:2px solid var(--ink);outline-offset:1px}
+  .url{flex:1;padding:5px 8px;border:1px solid var(--rule);border-radius:6px;font:11.5px var(--mono);
+       background:var(--surface2);color:var(--ink)}
+  .feedcard{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:12px;margin-bottom:8px}
+  .feedhead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .feedname{font-size:13px;font-weight:600;width:180px}
+  .x{color:var(--ink3);cursor:pointer;font-size:11px;background:none;border:0}
+  .foot{display:flex;align-items:center;padding:12px 18px;border-top:1px solid var(--rule)}
+  .foot .btn{margin-left:auto}
+  .note{font-size:12.5px;color:var(--ink2);margin:16px 0 0;max-width:74ch;line-height:1.6}
+  .note b{color:var(--ink)}
+  code{font-family:var(--mono);font-size:12px;background:#dfe5e1;padding:1px 5px;border-radius:4px}
+</style>
+
+<h1>Settings — with a rail, an independent prefix switch, and the hour range</h1>
+<p class="sub">Rendered at the size the real sheet would be (720×620, up from 560). Scroll the right pane —
+the rail follows. Click a rail item to jump. The prefix switch, the hour-range Save/Edit, and the
+holiday Edit all work.</p>
+
+<div class="sheet">
+  <div class="titlebar"><b>Settings</b></div>
+  <div class="body">
+
+    <nav class="rail" id="rail">
+      <a data-to="s-display" class="on"><i>◐</i>Display</a>
+      <a data-to="s-hours"><i>◷</i>Calendar view</a>
+      <a data-to="s-cals"><i>▤</i>Calendars</a>
+      <a data-to="s-holi"><i>★</i>Holidays</a>
+      <p class="railnote">Changes save when you close.</p>
+    </nav>
+
+    <div class="content" id="content">
+
+      <!-- DISPLAY -->
+      <section id="s-display">
+        <span class="eyebrow">Display</span>
+        <div class="card">
+          <div class="row">
+            <div class="grow">
+              <div class="cal">Calendar name prefix</div>
+              <div class="hint" style="margin:2px 0 0">
+                <code>考而思：高培-科学推理</code> shows as <code>高培-科学推理</code> when hidden.
+              </div>
+            </div>
+            <div class="seg" onclick="seg(event)">
+              <span>Show</span><span class="on">Hide</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- HOURS -->
+      <section id="s-hours">
+        <span class="eyebrow">Calendar view</span>
+        <p class="hint">The band the week opens on. The whole day stays scrollable — this only sets where it starts.</p>
+        <div class="card">
+          <div class="row" id="hourRow">
+            <div class="grow cal">Default hour range</div>
+
+            <span id="hourEdit" style="display:none;align-items:center;gap:6px">
+              <input class="tbox" id="h1" value="08" maxlength="2"><span class="fixed">:00</span>
+              <span class="word">to</span>
+              <input class="tbox" id="h2" value="23" maxlength="2"><span class="fixed">:00</span>
+              <button class="btn" style="padding:5px 12px" onclick="saveHours()">Save</button>
+            </span>
+
+            <span id="hourLocked" style="display:flex;align-items:center;gap:10px">
+              <span class="locked" id="hourText">08:00 to 23:00</span>
+              <button class="link" onclick="editHours()">Edit</button>
+            </span>
+          </div>
+        </div>
+        <p class="hint" id="hourWarn" style="color:var(--mark);display:none">
+          The end must be later than the start. 00 to 24 is the full day.
+        </p>
+      </section>
+
+      <!-- CALENDARS -->
+      <section id="s-cals">
+        <span class="eyebrow">Calendars</span>
+        <p class="hint">Unticked calendars are hidden from the sidebar and the calendar.</p>
+        <div class="card">
+          <div class="row">
+            <input type="checkbox" class="chk" checked>
+            <span class="dot" style="background:#C97B4A"></span>
+            <span class="grow cal">考而思</span>
+            <label class="mini"><input type="checkbox" class="chk" checked> Feedback</label>
+            <span class="arrows"><button>▲</button><button>▼</button></span>
+          </div>
+          <div class="row">
+            <input type="checkbox" class="chk" checked>
+            <span class="dot" style="background:#93A8A2"></span>
+            <span class="grow cal">Edward</span>
+            <label class="mini"><input type="checkbox" class="chk"> Feedback</label>
+            <span class="arrows"><button>▲</button><button>▼</button></span>
+          </div>
+          <div class="row">
+            <input type="checkbox" class="chk" checked>
+            <span class="dot" style="background:#8B7099"></span>
+            <span class="grow cal">思拓</span>
+            <label class="mini"><input type="checkbox" class="chk" checked> Feedback</label>
+            <span class="arrows"><button>▲</button><button>▼</button></span>
+          </div>
+          <div class="row">
+            <input type="checkbox" class="chk" checked>
+            <span class="dot" style="background:#4E7A6E"></span>
+            <span class="grow cal">新东方</span>
+            <label class="mini"><input type="checkbox" class="chk" checked> Feedback</label>
+            <span class="arrows"><button>▲</button><button>▼</button></span>
+          </div>
+          <div class="row">
+            <input type="checkbox" class="chk">
+            <span class="dot" style="background:#E8B33C"></span>
+            <span class="grow cal" style="color:var(--ink3)">华</span>
+            <label class="mini"><input type="checkbox" class="chk"> Feedback</label>
+            <span class="arrows"><button>▲</button><button>▼</button></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- HOLIDAYS -->
+      <section id="s-holi" style="margin-bottom:40px">
+        <div style="display:flex;align-items:center;margin-bottom:8px">
+          <span class="eyebrow">Holiday subscriptions</span>
+          <button class="link" style="margin-left:auto;font-size:15px">＋</button>
+        </div>
+
+        <div class="feedcard">
+          <div class="feedhead">
+            <span class="feedname">US Holidays</span>
+            <span class="swatches">
+              <b style="background:#C97B4A"></b><b style="background:#E8B33C"></b>
+              <b style="background:#4E7A6E"></b><b class="on" style="background:#6E8CA8"></b>
+              <b style="background:#8B7099"></b><b style="background:#8FA47E"></b>
+            </span>
+            <span style="margin-left:auto"><button class="x">✕</button></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="mini" style="font-family:var(--mono);font-size:11.5px">27 dates</span>
+            <button class="link" style="margin-left:auto" onclick="toggleFeed(this)">Edit</button>
+          </div>
+          <div style="display:none;gap:8px;margin-top:8px" class="feededit">
+            <input class="url" value="https://www.calendarlabs.com/ical-calendar/ics/76/US_Holidays.ics">
+            <button class="btn" style="padding:5px 12px">Load</button>
+          </div>
+        </div>
+
+        <div class="feedcard">
+          <div class="feedhead">
+            <span class="feedname">China Holidays</span>
+            <span class="swatches">
+              <b class="on" style="background:#C97B4A"></b><b style="background:#E8B33C"></b>
+              <b style="background:#4E7A6E"></b><b style="background:#6E8CA8"></b>
+              <b style="background:#8B7099"></b><b style="background:#8FA47E"></b>
+            </span>
+            <span style="margin-left:auto"><button class="x">✕</button></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="mini" style="font-family:var(--mono);font-size:11.5px">21 dates</span>
+            <button class="link" style="margin-left:auto" onclick="toggleFeed(this)">Edit</button>
+          </div>
+          <div style="display:none;gap:8px;margin-top:8px" class="feededit">
+            <input class="url" value="https://…/china_holidays.ics">
+            <button class="btn" style="padding:5px 12px">Load</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+  <div class="foot"><button class="btn">Done</button></div>
+</div>
+
+<p class="note"><b>On the hour range.</b> Hours only, <code>00</code>–<code>24</code>, since the grid is drawn in
+whole hours. It locks after Save and shows plain text, so the sheet opens with no text field for macOS to
+focus — the same trick that stopped the holiday alias being selected every time.</p>
+<p class="note"><b>On the rail.</b> Four items for four groups. It highlights as you scroll and jumps when
+clicked. Prefix now sits in its own <b>Display</b> group rather than looking like part of the calendar list.</p>
+<p class="note">Reply with changes, or “build it”.</p>
+
+<script>
+  const content = document.getElementById('content');
+  const links = [...document.querySelectorAll('#rail a')];
+  const secs = links.map(a => document.getElementById(a.dataset.to));
+
+  links.forEach((a,i) => a.onclick = () => secs[i].scrollIntoView({block:'start'}));
+
+  content.addEventListener('scroll', () => {
+    const top = content.scrollTop + 24;
+    let active = 0;
+    secs.forEach((s,i) => { if (s.offsetTop - content.offsetTop <= top) active = i; });
+    links.forEach((a,i) => a.classList.toggle('on', i === active));
+  });
+
+  function seg(e){
+    if (e.target.tagName !== 'SPAN') return;
+    [...e.currentTarget.children].forEach(s => s.classList.remove('on'));
+    e.target.classList.add('on');
+  }
+
+  function editHours(){
+    document.getElementById('hourLocked').style.display = 'none';
+    document.getElementById('hourEdit').style.display = 'flex';
+  }
+  function saveHours(){
+    const a = Math.max(0, Math.min(24, +document.getElementById('h1').value||0));
+    const b = Math.max(0, Math.min(24, +document.getElementById('h2').value||0));
+    const warn = document.getElementById('hourWarn');
+    if (b <= a){ warn.style.display='block'; return; }
+    warn.style.display='none';
+    document.getElementById('h1').value = String(a).padStart(2,'0');
+    document.getElementById('h2').value = String(b).padStart(2,'0');
+    document.getElementById('hourText').textContent =
+      String(a).padStart(2,'0')+':00 to '+String(b).padStart(2,'0')+':00';
+    document.getElementById('hourEdit').style.display = 'none';
+    document.getElementById('hourLocked').style.display = 'flex';
+  }
+  function toggleFeed(btn){
+    const box = btn.closest('.feedcard').querySelector('.feededit');
+    const open = box.style.display === 'flex';
+    box.style.display = open ? 'none' : 'flex';
+    btn.textContent = open ? 'Edit' : 'Cancel';
+  }
+</script>

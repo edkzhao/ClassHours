@@ -1,0 +1,246 @@
+<meta charset="utf-8">
+<title>ClassHours — Time Range, picked not dragged</title>
+<style>
+  :root{
+    --canvas:#F6F8F6; --surface:#fff; --surface2:#FAFCFA;
+    --rule:#E2E9E5; --ruleSoft:#EFF3F0;
+    --ink:#2A403C; --ink2:#5C7570; --ink3:#93A8A2;
+    --railA:#2F4F4A; --readoutA:#2C4A46;
+    --accent:#E8B33C; --mark:#C97B4A; --mark40:#E9C3AC; --mark20:#F6E6DC;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#e9ece9;font-family:var(--sans);color:var(--ink);
+       -webkit-font-smoothing:antialiased;padding:30px 24px 80px}
+  h1{font-size:20px;font-weight:600;letter-spacing:-.3px;margin:0 0 6px}
+  .sub{color:var(--ink2);font-size:13px;margin:0 0 24px;max-width:76ch;line-height:1.55}
+  .eyebrow{font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:var(--ink3)}
+
+  .opt{background:var(--canvas);border:1px solid #d7ded9;border-radius:12px;
+       width:560px;margin-bottom:18px;overflow:hidden;transition:.16s}
+  .opt.pick{border-color:var(--accent);box-shadow:0 0 0 3px rgba(232,179,60,.18)}
+  .opthead{display:flex;align-items:center;gap:10px;padding:10px 16px;
+           border-bottom:1px solid var(--rule);background:var(--surface2);cursor:pointer}
+  .num{width:20px;height:20px;border-radius:6px;background:var(--railA);color:#fff;
+       font:600 11px/20px var(--mono);text-align:center;flex:none}
+  .opt.pick .num{background:var(--accent);color:var(--readoutA)}
+  .name{font-size:13.5px;font-weight:600}
+  .why{font-size:12px;color:var(--ink2);margin-left:auto}
+  .pane{padding:16px}
+  .card{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:13px;margin-top:8px}
+  .note{font-size:12px;color:var(--ink2);padding:0 16px 14px;margin:0;line-height:1.55}
+  .note b{color:var(--ink)}
+  .row{display:flex;align-items:center;gap:10px}
+  .word{font-size:12.5px;color:var(--ink3)}
+  .len{font:11.5px var(--mono);color:var(--ink3);margin-left:auto}
+
+  select{font:13px var(--mono);color:var(--ink);background:var(--surface2);
+         border:1px solid var(--rule);border-radius:8px;padding:6px 8px}
+  select:focus{outline:none;border-color:var(--mark40)}
+
+  /* segmented */
+  .seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--rule);border-radius:8px;background:var(--surface2)}
+  .seg span{font:600 12px var(--sans);padding:4px 9px;border-radius:6px;color:var(--ink3);cursor:pointer}
+  .seg span.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(30,40,38,.10)}
+
+  /* stepper */
+  .step{display:inline-flex;align-items:center;border:1px solid var(--rule);border-radius:8px;
+        background:var(--surface2);overflow:hidden}
+  .step button{width:26px;height:28px;border:0;background:none;color:var(--ink2);cursor:pointer;font-size:13px}
+  .step button:hover{background:var(--ruleSoft);color:var(--ink)}
+  .step .val{font:13px var(--mono);padding:0 8px;min-width:52px;text-align:center;color:var(--ink)}
+
+  /* presets */
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{border:1px solid var(--rule);background:var(--surface2);border-radius:999px;
+        padding:5px 11px;font-size:12px;color:var(--ink2);cursor:pointer}
+  .chip:hover{border-color:var(--ink3)}
+  .chip.on{background:var(--mark20);border-color:var(--mark40);color:#8A4E2B;font-weight:600}
+  .chip .t{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-left:5px}
+  .chip.on .t{color:#A9663C}
+
+  .foot{margin-top:16px;font-size:13px;color:var(--ink2);max-width:76ch;line-height:1.6}
+  #picked{font-weight:600;color:var(--ink)}
+</style>
+
+<h1>Time Range — picked, not dragged</h1>
+<p class="sub">All four are click-to-choose. Shown at the width they occupy in Settings, and all live —
+try the click count on each.</p>
+
+<!-- 1 -->
+<div class="opt" onclick="pick(this,1)">
+  <div class="opthead"><span class="num">1</span><span class="name">Hour menu + half hour</span>
+    <span class="why">2 clicks per end, short lists</span></div>
+  <div class="pane">
+    <span class="eyebrow">Time Range</span>
+    <div class="card">
+      <div class="row">
+        <select id="s1h" onchange="calc1()"></select>
+        <span class="seg" data-for="s1m" onclick="seg(event,calc1)"><span class="on">:00</span><span>:30</span></span>
+        <span class="word">to</span>
+        <select id="e1h" onchange="calc1()"></select>
+        <span class="seg" data-for="e1m" onclick="seg(event,calc1)"><span class="on">:00</span><span>:30</span></span>
+        <span class="len" id="l1">16h 30m</span>
+      </div>
+    </div>
+  </div>
+  <p class="note">Hours are a 25-item list you can type into (<b>0</b>,<b>7</b> jumps straight there), minutes are a
+  two-way switch. Half hours are the only ones a teaching day ever needs.</p>
+</div>
+
+<!-- 2 -->
+<div class="opt" onclick="pick(this,2)">
+  <div class="opthead"><span class="num">2</span><span class="name">Two time menus</span>
+    <span class="why">1 click per end, long list</span></div>
+  <div class="pane">
+    <span class="eyebrow">Time Range</span>
+    <div class="card">
+      <div class="row">
+        <select id="s2" onchange="calc2()"></select>
+        <span class="word">to</span>
+        <select id="e2" onchange="calc2()"></select>
+        <span class="len" id="l2">16h 30m</span>
+      </div>
+    </div>
+  </div>
+  <p class="note">One menu per end, every half hour of the day in it. Fewest clicks, but a 49-row list to
+  scroll — this is what Calendar.app does.</p>
+</div>
+
+<!-- 3 -->
+<div class="opt" onclick="pick(this,3)">
+  <div class="opthead"><span class="num">3</span><span class="name">Steppers</span>
+    <span class="why">no list at all</span></div>
+  <div class="pane">
+    <span class="eyebrow">Time Range</span>
+    <div class="card">
+      <div class="row">
+        <span class="step">
+          <button onclick="bump(event,'s3',-30)">−</button>
+          <span class="val" id="s3v">07:30</span>
+          <button onclick="bump(event,'s3',30)">+</button>
+        </span>
+        <span class="word">to</span>
+        <span class="step">
+          <button onclick="bump(event,'e3',-30)">−</button>
+          <span class="val" id="e3v">24:00</span>
+          <button onclick="bump(event,'e3',30)">+</button>
+        </span>
+        <span class="len" id="l3">16h 30m</span>
+      </div>
+    </div>
+  </div>
+  <p class="note">Half an hour a click, nothing to open. Quick to nudge, slow to cross the day —
+  moving 08:00 to 17:00 is eighteen clicks.</p>
+</div>
+
+<!-- 4 -->
+<div class="opt" onclick="pick(this,4)">
+  <div class="opthead"><span class="num">4</span><span class="name">Presets, then menus</span>
+    <span class="why">1 click for the usual case</span></div>
+  <div class="pane">
+    <span class="eyebrow">Time Range</span>
+    <div class="card">
+      <div class="chips" id="chips">
+        <span class="chip on" data-a="450" data-b="1440">Teaching day<span class="t">07:30–24:00</span></span>
+        <span class="chip" data-a="480" data-b="1380">Daytime<span class="t">08:00–23:00</span></span>
+        <span class="chip" data-a="540" data-b="1080">Office<span class="t">09:00–18:00</span></span>
+        <span class="chip" data-a="0" data-b="1440">All day<span class="t">00:00–24:00</span></span>
+      </div>
+      <div class="row" style="margin-top:11px;padding-top:11px;border-top:1px solid var(--ruleSoft)">
+        <select id="s4" onchange="calc4()"></select>
+        <span class="word">to</span>
+        <select id="e4" onchange="calc4()"></select>
+        <span class="len" id="l4">16h 30m</span>
+      </div>
+    </div>
+  </div>
+  <p class="note">A row of ready-made spans for the common cases, menus underneath when none of them fits.
+  Picking a chip fills the menus; changing a menu clears the chip. Tallest of the four.</p>
+</div>
+
+<p class="foot">Picked: <span id="picked">nothing yet</span> — reply with the number.
+I'd build <b>1</b>: two short lists and a two-way switch, precise to the half hour, and no row of guesses
+about how you work.</p>
+
+<script>
+  const DAY=24*60;
+  const fmt=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+  const dur=(a,b)=>Math.floor((b-a)/60)+'h '+String((b-a)%60).padStart(2,'0')+'m';
+
+  // hour menus
+  function fillHours(id,sel){
+    const el=document.getElementById(id);
+    for(let h=0;h<=24;h++){
+      const o=document.createElement('option');
+      o.value=h; o.textContent=String(h).padStart(2,'0');
+      if(h===sel) o.selected=true;
+      el.appendChild(o);
+    }
+  }
+  fillHours('s1h',7); fillHours('e1h',24);
+
+  // half-hour menus
+  function fillTimes(id,sel){
+    const el=document.getElementById(id);
+    for(let m=0;m<=DAY;m+=30){
+      const o=document.createElement('option');
+      o.value=m; o.textContent=fmt(m);
+      if(m===sel) o.selected=true;
+      el.appendChild(o);
+    }
+  }
+  fillTimes('s2',450); fillTimes('e2',1440);
+  fillTimes('s4',450); fillTimes('e4',1440);
+
+  function segVal(box){ return box.querySelector('.on').textContent===':30'?30:0; }
+  function seg(e,after){
+    e.stopPropagation();
+    if(e.target.tagName!=='SPAN'||!e.target.parentNode.classList.contains('seg')) return;
+    [...e.currentTarget.children].forEach(s=>s.classList.remove('on'));
+    e.target.classList.add('on');
+    after();
+  }
+
+  function calc1(){
+    const segs=document.querySelectorAll('#tmp,.seg');
+    const boxes=document.querySelectorAll('.opt .seg');
+    const a=+document.getElementById('s1h').value*60+segVal(boxes[0]);
+    const b=+document.getElementById('e1h').value*60+segVal(boxes[1]);
+    document.getElementById('l1').textContent = b>a?dur(a,b):'—';
+  }
+  function calc2(){
+    const a=+document.getElementById('s2').value, b=+document.getElementById('e2').value;
+    document.getElementById('l2').textContent = b>a?dur(a,b):'—';
+  }
+  const st={s3:450,e3:1440};
+  function bump(e,id,d){
+    e.stopPropagation();
+    st[id]=Math.max(0,Math.min(DAY,st[id]+d));
+    if(st.e3<=st.s3){ if(id==='s3') st.s3=st.e3-30; else st.e3=st.s3+30; }
+    document.getElementById('s3v').textContent=fmt(st.s3);
+    document.getElementById('e3v').textContent=fmt(st.e3);
+    document.getElementById('l3').textContent=dur(st.s3,st.e3);
+  }
+  function calc4(){
+    const a=+document.getElementById('s4').value, b=+document.getElementById('e4').value;
+    document.getElementById('l4').textContent = b>a?dur(a,b):'—';
+    document.querySelectorAll('#chips .chip').forEach(c=>{
+      c.classList.toggle('on', +c.dataset.a===a && +c.dataset.b===b);
+    });
+  }
+  document.getElementById('chips').onclick=e=>{
+    e.stopPropagation();
+    const c=e.target.closest('.chip'); if(!c) return;
+    document.getElementById('s4').value=c.dataset.a;
+    document.getElementById('e4').value=c.dataset.b;
+    calc4();
+  };
+
+  function pick(el,n){
+    document.querySelectorAll('.opt').forEach(o=>o.classList.remove('pick'));
+    el.classList.add('pick');
+    document.getElementById('picked').textContent='Option '+n+' — '+el.querySelector('.name').textContent;
+  }
+</script>

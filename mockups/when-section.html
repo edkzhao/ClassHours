@@ -1,0 +1,270 @@
+<meta charset="utf-8">
+<title>ClassHours — the WHEN section</title>
+<style>
+  :root{
+    --canvas:#F6F8F6; --surface:#fff; --surface2:#FAFCFA;
+    --rule:#E2E9E5; --ruleSoft:#EFF3F0;
+    --ink:#2A403C; --ink2:#5C7570; --ink3:#93A8A2;
+    --railA:#2F4F4A; --readoutA:#2C4A46;
+    --accent:#E8B33C; --mark:#C97B4A; --mark40:#E9C3AC; --mark20:#F6E6DC;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--canvas);font-family:var(--sans);color:var(--ink);
+       -webkit-font-smoothing:antialiased;padding:32px 24px 80px}
+  h1{font-size:21px;font-weight:600;letter-spacing:-.3px;margin:0 0 6px}
+  h2{font-size:14px;font-weight:600;margin:0}
+  .sub{color:var(--ink2);font-size:13px;margin:0 0 12px;max-width:70ch;line-height:1.55}
+  .eyebrow{font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:var(--ink3)}
+  code{font-family:var(--mono);font-size:12px;background:var(--ruleSoft);padding:1px 5px;border-radius:4px}
+
+  .lede{background:var(--surface);border:1px solid var(--rule);border-left:3px solid var(--accent);
+        border-radius:10px;padding:14px 16px;margin:0 0 26px;max-width:860px}
+  .lede p{margin:0;font-size:13px;color:var(--ink2);line-height:1.6}
+  .lede b{color:var(--ink)}
+
+  .row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+
+  .opt{background:var(--surface);border:1px solid var(--rule);border-radius:12px;
+       width:436px;overflow:hidden;transition:.16s;margin-bottom:20px}
+  .opt.pick{border-color:var(--accent);box-shadow:0 0 0 3px rgba(232,179,60,.18)}
+  .opthead{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--ruleSoft);
+           background:var(--surface2);cursor:pointer}
+  .num{width:20px;height:20px;border-radius:6px;background:var(--railA);color:#fff;
+       font:600 11px/20px var(--mono);text-align:center;flex:none}
+  .opt.pick .num{background:var(--accent);color:var(--readoutA)}
+  .panel{padding:16px;width:404px}
+  .note{font-size:12px;color:var(--ink2);padding:0 16px 14px;line-height:1.55;margin:0}
+  .note b{color:var(--ink)}
+  .verdict{font-size:11.5px;padding:3px 8px;border-radius:5px;font-weight:600;margin-left:auto}
+  .good{background:#E7F0EA;color:#2F4F4A}
+  .meh{background:var(--mark20);color:#8A4E2B}
+
+  /* form bits at real scale */
+  .grp{margin-bottom:14px}
+  .grp>.eyebrow{display:block;margin-bottom:5px}
+  .chips{display:flex;gap:2px}
+  .chips b{width:20px;height:24px;border:1px solid var(--rule);border-radius:6px;background:var(--surface2);
+           font:600 11px/22px var(--sans);color:var(--ink3);text-align:center;cursor:pointer;user-select:none}
+  .chips b.on{background:var(--railA);color:#fff;border-color:transparent}
+  .vr{width:1px;height:20px;background:rgba(147,168,162,.45);margin:0 6px;align-self:center}
+  .tbox{width:22px;padding:4px 2px;border:1px solid var(--rule);border-radius:6px;background:var(--surface2);
+        font:12.5px var(--mono);text-align:center;color:var(--ink)}
+  .tbox:focus{outline:none;background:var(--mark20);border-color:var(--mark40)}
+  .colon{font:12px var(--mono);color:var(--ink3);margin:0 2px}
+  .whenrow{display:flex;align-items:center;gap:4px;margin-bottom:7px}
+  .x{width:20px;height:20px;color:var(--ink3);font-size:11px;text-align:center;line-height:20px;cursor:pointer}
+  .add{background:none;border:0;padding:2px 0;color:var(--mark);font:600 12.5px var(--sans);cursor:pointer}
+
+  select.dur,select.dsel{font:12.5px var(--sans);color:var(--ink);background:var(--surface2);
+        border:1px solid var(--rule);border-radius:7px;padding:4px 6px}
+  .for{font-size:12px;color:var(--ink3);margin:0 4px}
+  .arrow{font:12px var(--mono);color:var(--ink2);margin-left:6px;white-space:nowrap}
+  .plus1{background:var(--mark20);color:#8A4E2B;font-weight:700;font-size:10px;
+         padding:1px 5px;border-radius:4px;margin-left:5px;letter-spacing:.4px}
+
+  .datebtn{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--rule);
+           border-radius:8px;background:var(--surface2);font-size:13px;min-width:96px;cursor:pointer}
+  .datebtn i{margin-left:auto;font-style:normal;font-size:11px;color:var(--ink2)}
+
+  .seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--rule);border-radius:8px;background:var(--surface2)}
+  .seg span{font-size:12.5px;font-weight:600;padding:4px 11px;border-radius:6px;color:var(--ink3);cursor:pointer}
+  .seg span.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(30,40,38,.10)}
+
+  .sess{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--rule);
+        border-radius:8px;background:var(--surface2);margin-bottom:5px}
+  .sess .d{font:12.5px var(--mono);color:var(--ink);min-width:74px}
+  .sess .t{font:12.5px var(--mono);color:var(--ink2)}
+
+  .preview{background:var(--surface2);border:1px solid var(--rule);border-radius:9px;
+           padding:9px 12px;font-size:12px;color:var(--ink2)}
+  .preview b{font:500 15px var(--mono);color:var(--ink)}
+
+  .foot{margin-top:10px;font-size:13px;color:var(--ink2);max-width:860px;line-height:1.6}
+  #picked{font-weight:600;color:var(--ink)}
+  .q{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:14px 16px;
+     max-width:860px;margin:0 0 26px}
+  .q h2{margin-bottom:6px}
+  .q p{margin:0;font-size:13px;color:var(--ink2);line-height:1.6}
+</style>
+
+<h1>The WHEN section — three designs</h1>
+<p class="sub">Same panel width as the real one (404pt), so spacing is honest. The duration dropdowns are live —
+change one and watch the end time, including past midnight. Click a card to mark your pick.</p>
+
+<div class="lede">
+  <p><b>Cross-midnight solves itself.</b> Once duration replaces the end time, <code>23:00 for 2h 00m</code>
+  is unambiguous — it ends at 01:00 the next day, and there is no way to express it wrongly. The panel shows
+  <span class="plus1">+1d</span> so it is never a surprise. In <b>Custom</b>, where you type both ends,
+  an end earlier than the start is read as the next day rather than rejected — the only sane reading.</p>
+</div>
+
+<div class="q">
+  <h2>The real question: two sessions that follow no pattern</h2>
+  <p>One Saturday, one the following Wednesday at noon, both in a single series. Today's WHEN is built entirely
+  around weekly repetition, so it cannot say this. Below are three ways out — they differ in what the
+  <i>common</i> case costs, since most entries are still a plain weekly block.</p>
+</div>
+
+<div class="row">
+
+<!-- 1 -->
+<div class="opt" onclick="pick(this,1)">
+  <div class="opthead"><span class="num">1</span><h2>Two modes</h2>
+    <span class="verdict good">common case untouched</span></div>
+  <div class="panel">
+    <div class="grp">
+      <span class="eyebrow">When</span>
+      <div class="seg" style="margin-bottom:10px" onclick="event.stopPropagation();mode(this)">
+        <span>Repeats</span><span class="on">Specific dates</span>
+      </div>
+      <div class="sess"><span class="d">Sat Aug 15</span>
+        <input class="tbox" value="14"><span class="colon">:</span><input class="tbox" value="00">
+        <span class="for">for</span>
+        <select class="dur" onchange="calc(this)" onclick="event.stopPropagation()">
+          <option>0h 15m</option><option>0h 30m</option><option>1h 00m</option>
+          <option>1h 30m</option><option selected>2h 00m</option><option>Custom…</option>
+        </select>
+        <span class="arrow">→ 16:00</span><span class="x">×</span></div>
+      <div class="sess"><span class="d">Wed Aug 19</span>
+        <input class="tbox" value="12"><span class="colon">:</span><input class="tbox" value="00">
+        <span class="for">for</span>
+        <select class="dur" onchange="calc(this)" onclick="event.stopPropagation()">
+          <option>0h 15m</option><option>0h 30m</option><option>1h 00m</option>
+          <option selected>1h 30m</option><option>2h 00m</option><option>Custom…</option>
+        </select>
+        <span class="arrow">→ 13:30</span><span class="x">×</span></div>
+      <button class="add">+ Add a date</button>
+    </div>
+    <div class="preview"><b>2 occurrences</b> &nbsp;·&nbsp; 3h 30m &nbsp;·&nbsp; one series</div>
+  </div>
+  <p class="note"><b>Repeats</b> is exactly today's screen, unchanged. <b>Specific dates</b> is a plain list.
+  You pick the mode up front, and the two never mix — so a block of Mondays that later needs one extra
+  Saturday means editing that event afterwards, not entering it here.</p>
+</div>
+
+<!-- 2 -->
+<div class="opt" onclick="pick(this,2)">
+  <div class="opthead"><span class="num">2</span><h2>Pattern + extra dates</h2>
+    <span class="verdict good">handles the mixed case</span></div>
+  <div class="panel">
+    <div class="grp">
+      <span class="eyebrow">When</span>
+      <div class="whenrow">
+        <span class="chips" onclick="event.stopPropagation();chip(event)">
+          <b>S</b><b>M</b><b>T</b><b>W</b><b>T</b><b>F</b><b>S</b></span>
+        <span class="vr"></span>
+        <input class="tbox" value="11"><span class="colon">:</span><input class="tbox" value="10">
+        <span class="for">for</span>
+        <select class="dur" onchange="calc(this)" onclick="event.stopPropagation()">
+          <option>0h 15m</option><option>0h 30m</option><option>1h 00m</option>
+          <option selected>1h 30m</option><option>2h 00m</option><option>Custom…</option>
+        </select>
+        <span class="arrow">→ 12:40</span>
+      </div>
+      <button class="add">+ Add another day &amp; time</button>
+    </div>
+    <div class="grp" style="display:flex;gap:8px;align-items:flex-end">
+      <div><span class="eyebrow">Starting</span><div class="datebtn">Aug 14<i>▾</i></div></div>
+      <div><span class="eyebrow" style="padding-left:7px">Ends</span>
+        <div style="display:flex;gap:6px"><select class="dsel"><option>On</option><option>After</option></select>
+        <div class="datebtn">Dec 20<i>▾</i></div></div></div>
+    </div>
+    <div class="grp">
+      <span class="eyebrow">Extra dates</span>
+      <div class="sess"><span class="d">Sat Aug 15</span>
+        <input class="tbox" value="14"><span class="colon">:</span><input class="tbox" value="00">
+        <span class="for">for</span>
+        <select class="dur" onchange="calc(this)" onclick="event.stopPropagation()">
+          <option>0h 15m</option><option>0h 30m</option><option>1h 00m</option>
+          <option>1h 30m</option><option selected>2h 00m</option><option>Custom…</option>
+        </select>
+        <span class="arrow">→ 16:00</span><span class="x">×</span></div>
+      <button class="add">+ Add a one-off date</button>
+    </div>
+    <div class="preview"><b>13 occurrences</b> &nbsp;·&nbsp; 12 weekly + 1 extra</div>
+  </div>
+  <p class="note">The weekly block stays the fast path, and <b>Extra dates</b> is empty until you need it.
+  Your Saturday-plus-Wednesday case is entered with <i>no</i> pattern and two extras — which works, but reads
+  slightly oddly, since the section is named for exceptions yet is carrying the whole event.</p>
+</div>
+
+<!-- 3 -->
+<div class="opt" onclick="pick(this,3)">
+  <div class="opthead"><span class="num">3</span><h2>One list of sessions</h2>
+    <span class="verdict meh">costs the common case</span></div>
+  <div class="panel">
+    <div class="grp">
+      <div style="display:flex;align-items:center;margin-bottom:6px">
+        <span class="eyebrow">Sessions</span>
+        <button class="add" style="margin-left:auto">Fill from a pattern…</button>
+      </div>
+      <div class="sess"><span class="d">Sat Aug 15</span>
+        <input class="tbox" value="14"><span class="colon">:</span><input class="tbox" value="00">
+        <span class="for">for</span>
+        <select class="dur" onchange="calc(this)" onclick="event.stopPropagation()">
+          <option>0h 15m</option><option>0h 30m</option><option>1h 00m</option>
+          <option>1h 30m</option><option selected>2h 00m</option><option>Custom…</option>
+        </select>
+        <span class="arrow">→ 16:00</span><span class="x">×</span></div>
+      <div class="sess"><span class="d">Wed Aug 19</span>
+        <input class="tbox" value="23"><span class="colon">:</span><input class="tbox" value="00">
+        <span class="for">for</span>
+        <select class="dur" onchange="calc(this)" onclick="event.stopPropagation()">
+          <option>0h 15m</option><option>0h 30m</option><option>1h 00m</option>
+          <option>1h 30m</option><option selected>2h 00m</option><option>Custom…</option>
+        </select>
+        <span class="arrow">→ 01:00<span class="plus1">+1d</span></span><span class="x">×</span></div>
+      <button class="add" onclick="event.stopPropagation();addRow(this)">+ Add a session</button>
+    </div>
+    <div class="preview"><b>2 occurrences</b> &nbsp;·&nbsp; every event is a list, however long</div>
+  </div>
+  <p class="note">One idea instead of two. <b>Fill from a pattern…</b> expands Mondays and Thursdays into real
+  rows you can then edit or delete individually — so a term with one moved class is fixed in place.
+  The cost is real: a 24-week course becomes 24 rows to scroll, where today it is one line.
+  The second row shows a class running past midnight.</p>
+</div>
+
+</div>
+
+<p class="foot">Picked: <span id="picked">nothing yet</span> — reply with the number.
+My recommendation is <b>2</b>: it leaves the entry you do most often exactly as it is today, and the
+Saturday/Wednesday case still fits. If ad-hoc scheduling is becoming the norm rather than the exception,
+<b>3</b> is the more honest model and I would build that instead.</p>
+
+<script>
+  const MIN = {'0h 15m':15,'0h 30m':30,'1h 00m':60,'1h 30m':90,'2h 00m':120};
+  function pick(el,n){
+    document.querySelectorAll('.opt').forEach(o=>o.classList.remove('pick'));
+    el.classList.add('pick');
+    document.getElementById('picked').textContent='Design '+n+' — '+el.querySelector('h2').textContent;
+  }
+  function calc(sel){
+    const row=sel.closest('.sess')||sel.closest('.whenrow');
+    const out=row.querySelector('.arrow');
+    if(sel.value==='Custom…'){ out.innerHTML='<span style="color:#93A8A2">type the end time</span>'; return; }
+    const b=row.querySelectorAll('.tbox');
+    const start=(+b[0].value||0)*60+(+b[1].value||0);
+    const end=start+MIN[sel.value];
+    const next=end>=1440;
+    const e=end%1440;
+    out.innerHTML='→ '+String(Math.floor(e/60)).padStart(2,'0')+':'+String(e%60).padStart(2,'0')+
+      (next?'<span class="plus1">+1d</span>':'');
+  }
+  function chip(e){ if(e.target.tagName==='B') e.target.classList.toggle('on'); }
+  function mode(el){
+    if(event.target.tagName!=='SPAN')return;
+    el.querySelectorAll('span').forEach(s=>s.classList.remove('on'));
+    event.target.classList.add('on');
+  }
+  function addRow(btn){
+    const t=btn.parentNode.querySelector('.sess');
+    const c=t.cloneNode(true);
+    c.querySelector('.dur').addEventListener('change',function(){calc(this)});
+    btn.parentNode.insertBefore(c,btn);
+  }
+  document.querySelectorAll('.tbox').forEach(b=>b.addEventListener('input',()=>{
+    const row=b.closest('.sess')||b.closest('.whenrow'); calc(row.querySelector('.dur'));
+  }));
+</script>

@@ -1,0 +1,247 @@
+<meta charset="utf-8">
+<title>ClassHours — Today's hours</title>
+<style>
+  :root{
+    --canvas:#F6F8F6; --surface:#fff; --surface2:#FAFCFA;
+    --rule:#E2E9E5; --ruleSoft:#EFF3F0;
+    --ink:#2A403C; --ink2:#5C7570; --ink3:#93A8A2;
+    --railA:#2F4F4A; --readoutA:#2C4A46;
+    --accent:#E8B33C; --mark:#C97B4A; --mark40:#E9C3AC; --mark20:#F6E6DC;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--canvas);font-family:var(--sans);color:var(--ink);
+       -webkit-font-smoothing:antialiased;padding:34px 26px 70px}
+  h1{font-size:20px;font-weight:600;letter-spacing:-.3px;margin:0 0 4px}
+  .sub{color:var(--ink2);font-size:13px;margin:0 0 26px;max-width:62ch;line-height:1.5}
+  .eyebrow{font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:var(--ink3)}
+
+  .opt{background:var(--surface);border:1px solid var(--rule);border-radius:12px;
+       margin-bottom:14px;overflow:hidden;transition:.16s}
+  .opt.pick{border-color:var(--accent);box-shadow:0 0 0 3px rgba(232,179,60,.18)}
+  .opthead{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--ruleSoft);
+           background:var(--surface2);cursor:pointer}
+  .num{width:20px;height:20px;border-radius:6px;background:var(--railA);color:#fff;
+       font:600 11px/20px var(--mono);text-align:center;flex:none}
+  .opt.pick .num{background:var(--accent);color:var(--readoutA)}
+  .name{font-size:13.5px;font-weight:600}
+  .why{font-size:12px;color:var(--ink2);margin-left:auto;text-align:right}
+
+  /* honest top-bar scale */
+  .bar{display:flex;align-items:center;gap:14px;padding:8px 20px 14px;background:var(--surface)}
+  .barleft{display:flex;align-items:center;gap:12px;color:var(--ink3);font-size:13px}
+  .chev{font-size:15px;color:var(--ink3)}
+  .mon{font-size:19px;font-weight:600;letter-spacing:-.3px;color:var(--ink)}
+  .yr{font:300 19px var(--mono);color:var(--ink2)}
+  .pill{border:1px solid var(--rule);border-radius:8px;padding:4px 11px;font-size:12.5px;color:var(--ink2)}
+  .seg{display:flex;gap:2px;padding:2px;border:1px solid var(--rule);border-radius:8px;background:var(--surface2)}
+  .seg span{font-size:12.5px;font-weight:600;padding:5px 12px;border-radius:6px;color:var(--ink3)}
+  .seg span.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(30,40,38,.10)}
+  .spacer{flex:1}
+  .newev{background:var(--railA);color:#fff;border-radius:8px;padding:6px 13px;font-size:12.5px;font-weight:600}
+
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---------- 1 dial ---------- */
+  .dial{display:flex;align-items:center;gap:11px}
+  .dial .cap{font:600 22px var(--mono);color:var(--ink);line-height:1}
+  .dial .cap i{font-style:normal;font-size:12px;color:var(--ink3);margin-left:1px}
+  .dial .lbl{font-size:9.5px;font-weight:700;letter-spacing:1.3px;color:var(--ink3);text-transform:uppercase}
+
+  /* ---------- 2 pips ---------- */
+  .pips{display:flex;gap:3px;align-items:flex-end;height:22px}
+  .pips i{width:6px;border-radius:2px;background:var(--ruleSoft);height:8px;display:block}
+  .pips i.f{background:var(--mark);height:20px}
+  .pips i.h{background:linear-gradient(to top,var(--mark) 50%,var(--ruleSoft) 50%);height:20px}
+
+  /* ---------- 3 composition ---------- */
+  .comp{width:172px}
+  .compbar{display:flex;gap:2px;height:9px;margin-top:5px}
+  .compbar b{border-radius:2px;display:block}
+  .complab{display:flex;gap:9px;margin-top:5px;font-size:10px;color:var(--ink3)}
+  .complab s{text-decoration:none;display:flex;align-items:center;gap:3px}
+  .complab u{width:6px;height:6px;border-radius:2px;display:block}
+
+  /* ---------- 4 readout slab ---------- */
+  .slab{display:flex;align-items:baseline;gap:7px;background:var(--readoutA);
+        border-radius:9px;padding:7px 13px 8px}
+  .slab .big{font:500 21px var(--mono);color:#fff;line-height:1}
+  .slab .un{font-size:11px;color:rgba(255,255,255,.62)}
+  .slab .tag{font-size:9.5px;font-weight:700;letter-spacing:1.2px;color:var(--accent);text-transform:uppercase}
+
+  /* ---------- 5 week sparkline ---------- */
+  .spark{display:flex;align-items:flex-end;gap:4px;height:26px}
+  .spark i{width:9px;background:var(--ruleSoft);border-radius:2px 2px 0 0;display:block}
+  .spark i.now{background:var(--mark)}
+  .sparkwrap{display:flex;align-items:center;gap:11px}
+
+  /* ---------- 6 progress rail ---------- */
+  .rail{width:190px}
+  .railtop{display:flex;align-items:baseline;justify-content:space-between}
+  .railbar{height:6px;border-radius:3px;background:var(--ruleSoft);margin-top:6px;position:relative;overflow:hidden}
+  .railbar b{position:absolute;inset:0 auto 0 0;border-radius:3px;
+             background:linear-gradient(90deg,var(--mark40),var(--mark))}
+  .railbar u{position:absolute;top:-2px;bottom:-2px;width:1.5px;background:var(--railA);opacity:.5}
+  .railfoot{display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--ink3)}
+
+  .note{font-size:12px;color:var(--ink2);padding:0 16px 13px;margin:-2px 0 0}
+  .foot{margin-top:24px;font-size:12.5px;color:var(--ink2)}
+  #picked{font-weight:600;color:var(--ink)}
+</style>
+
+<h1>Today's hours — six options</h1>
+<p class="sub">Each one is drawn at real size inside the calendar top bar, so what you see is what lands in the app.
+Sample day: <b>4h 30m</b> across three classes, in a week whose busiest day is 6h.
+Click a card to mark your pick, then just tell me the number.</p>
+
+<!-- 1 -->
+<div class="opt" onclick="pick(this,1)">
+  <div class="opthead"><span class="num">1</span><span class="name">Arc dial</span>
+    <span class="why">Fills clockwise against the week's busiest day</span></div>
+  <div class="bar">
+    <div class="barleft"><span>▣</span><span class="chev">‹</span>
+      <span class="mon">August</span><span class="yr">2026</span><span class="chev">›</span>
+      <span class="pill">Today</span></div>
+    <div class="seg"><span class="on">Week</span><span>Month</span></div>
+    <div class="spacer"></div>
+    <div class="dial">
+      <svg width="40" height="40" viewBox="0 0 40 40">
+        <circle cx="20" cy="20" r="15.5" fill="none" stroke="#EFF3F0" stroke-width="4.5"/>
+        <circle cx="20" cy="20" r="15.5" fill="none" stroke="#C97B4A" stroke-width="4.5"
+                stroke-linecap="round" stroke-dasharray="73 97.4" transform="rotate(-90 20 20)"/>
+      </svg>
+      <div><div class="lbl">Today</div><div class="cap">4<i>h</i>30<i>m</i></div></div>
+    </div>
+    <div class="newev">+ New Event</div>
+  </div>
+  <p class="note">Quiet when the day is empty — the ring simply sits grey.</p>
+</div>
+
+<!-- 2 -->
+<div class="opt" onclick="pick(this,2)">
+  <div class="opthead"><span class="num">2</span><span class="name">Hour pips</span>
+    <span class="why">One tick per hour, half-ticks for half hours</span></div>
+  <div class="bar">
+    <div class="barleft"><span>▣</span><span class="chev">‹</span>
+      <span class="mon">August</span><span class="yr">2026</span><span class="chev">›</span>
+      <span class="pill">Today</span></div>
+    <div class="seg"><span class="on">Week</span><span>Month</span></div>
+    <div class="spacer"></div>
+    <div style="display:flex;align-items:center;gap:11px">
+      <div><div class="eyebrow">Today</div>
+        <div class="mono" style="font-size:17px;font-weight:500;margin-top:1px">4h 30m</div></div>
+      <div class="pips">
+        <i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="h"></i>
+        <i></i><i></i><i></i>
+      </div>
+    </div>
+    <div class="newev">+ New Event</div>
+  </div>
+  <p class="note">Countable at a glance — you can read “four and a half” without reading the number.</p>
+</div>
+
+<!-- 3 -->
+<div class="opt" onclick="pick(this,3)">
+  <div class="opthead"><span class="num">3</span><span class="name">Composition bar</span>
+    <span class="why">Splits the day by calendar, in your calendar colors</span></div>
+  <div class="bar">
+    <div class="barleft"><span>▣</span><span class="chev">‹</span>
+      <span class="mon">August</span><span class="yr">2026</span><span class="chev">›</span>
+      <span class="pill">Today</span></div>
+    <div class="seg"><span class="on">Week</span><span>Month</span></div>
+    <div class="spacer"></div>
+    <div class="comp">
+      <div style="display:flex;align-items:baseline;justify-content:space-between">
+        <span class="eyebrow">Today</span>
+        <span class="mono" style="font-size:16px;font-weight:500">4h 30m</span></div>
+      <div class="compbar">
+        <b style="flex:2;background:#C97B4A"></b>
+        <b style="flex:1.5;background:#5E8B7E"></b>
+        <b style="flex:1;background:#E8B33C"></b>
+      </div>
+      <div class="complab">
+        <s><u style="background:#C97B4A"></u>考而思 2h</s>
+        <s><u style="background:#5E8B7E"></u>新东方 1.5h</s>
+        <s><u style="background:#E8B33C"></u>思拓 1h</s>
+      </div>
+    </div>
+    <div class="newev">+ New Event</div>
+  </div>
+  <p class="note">The only option that answers “what am I teaching today”, not just “how long”. Widest of the six.</p>
+</div>
+
+<!-- 4 -->
+<div class="opt" onclick="pick(this,4)">
+  <div class="opthead"><span class="num">4</span><span class="name">Readout slab</span>
+    <span class="why">Borrows the dark readout from the hours page</span></div>
+  <div class="bar">
+    <div class="barleft"><span>▣</span><span class="chev">‹</span>
+      <span class="mon">August</span><span class="yr">2026</span><span class="chev">›</span>
+      <span class="pill">Today</span></div>
+    <div class="seg"><span class="on">Week</span><span>Month</span></div>
+    <div class="spacer"></div>
+    <div class="slab">
+      <span class="tag">Today</span>
+      <span class="big">4:30</span>
+      <span class="un">/ 3 classes</span>
+    </div>
+    <div class="newev">+ New Event</div>
+  </div>
+  <p class="note">Strongest presence, and it ties the calendar page visually to the total-duration box you already like.</p>
+</div>
+
+<!-- 5 -->
+<div class="opt" onclick="pick(this,5)">
+  <div class="opthead"><span class="num">5</span><span class="name">Week sparkline</span>
+    <span class="why">Today in context of the seven days on screen</span></div>
+  <div class="bar">
+    <div class="barleft"><span>▣</span><span class="chev">‹</span>
+      <span class="mon">August</span><span class="yr">2026</span><span class="chev">›</span>
+      <span class="pill">Today</span></div>
+    <div class="seg"><span class="on">Week</span><span>Month</span></div>
+    <div class="spacer"></div>
+    <div class="sparkwrap">
+      <div class="spark">
+        <i style="height:6px"></i><i style="height:17px"></i><i style="height:11px"></i>
+        <i class="now" style="height:20px"></i><i style="height:26px"></i>
+        <i style="height:9px"></i><i style="height:4px"></i>
+      </div>
+      <div><div class="eyebrow">Today</div>
+        <div class="mono" style="font-size:17px;font-weight:500;margin-top:1px">4h 30m</div></div>
+    </div>
+    <div class="newev">+ New Event</div>
+  </div>
+  <p class="note">Moves as you swipe the week — the most alive of the six, and it shows where the heavy days sit.</p>
+</div>
+
+<!-- 6 -->
+<div class="opt" onclick="pick(this,6)">
+  <div class="opthead"><span class="num">6</span><span class="name">Day rail</span>
+    <span class="why">How much of the day is taught, and how much is left</span></div>
+  <div class="bar">
+    <div class="barleft"><span>▣</span><span class="chev">‹</span>
+      <span class="mon">August</span><span class="yr">2026</span><span class="chev">›</span>
+      <span class="pill">Today</span></div>
+    <div class="seg"><span class="on">Week</span><span>Month</span></div>
+    <div class="spacer"></div>
+    <div class="rail">
+      <div class="railtop"><span class="eyebrow">Today</span>
+        <span class="mono" style="font-size:16px;font-weight:500">4h 30m</span></div>
+      <div class="railbar"><b style="width:63%"></b><u style="left:47%"></u></div>
+      <div class="railfoot"><span>2h 00m done</span><span>2h 30m ahead</span></div>
+    </div>
+    <div class="newev">+ New Event</div>
+  </div>
+  <p class="note">The marker is now. Splits the day into taught and still-to-teach, which no other option shows.</p>
+</div>
+
+<p class="foot">Picked: <span id="picked">nothing yet</span> — reply with the number, or mix (e.g. “4, but with the sparkline from 5”).</p>
+
+<script>
+  function pick(el,n){
+    document.querySelectorAll('.opt').forEach(o=>o.classList.remove('pick'));
+    el.classList.add('pick');
+    document.getElementById('picked').textContent='Option '+n+' — '+el.querySelector('.name').textContent;
+  }
+</script>
