@@ -103,6 +103,8 @@ struct ContentView: View {
         .overlay {
             if state.settingsShown {
                 ZStack {
+                    // So Settings stays visually in front, gently soften the
+                    // calendar behind it while keeping the outside click area.
                     Color.black.opacity(0.10)
                         .contentShape(Rectangle())
                         .onTapGesture { state.settingsShown = false }
@@ -110,7 +112,11 @@ struct ContentView: View {
                         .environmentObject(state)
                         .environmentObject(prefs)
                         .environmentObject(holidays)
-                        .shadow(color: Color.black.opacity(0.16), radius: 18, y: 7)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(Palette.rule, lineWidth: 1)
+                        }
                 }
                 .transition(.opacity)
                 .zIndex(20)
@@ -141,9 +147,6 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openTidyUp)) { _ in
             tidyUpShown = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-            if state.settingsShown { state.settingsShown = false }
         }
         .sheet(isPresented: $tidyUpShown) {
             TidyUpSheet().environmentObject(state).environmentObject(series)
