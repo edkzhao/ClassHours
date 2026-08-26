@@ -163,6 +163,17 @@ check("10:10 parses",     "\(TimeText.minutes("10:10") ?? -1)", "610")
 check("bad text rejected","\(TimeText.minutes("25:00") ?? -1)", "-1")
 check("formats back",     TimeText.hhmm(610), "10:10")
 
+print("\nBranches are a weekday plus a time range")
+let thuSeven = date(2026, 8, 6, 7, 0)       // Thursday
+let thuNine = date(2026, 8, 6, 9, 0)
+let branch = BranchSignature(start: thuSeven, end: thuNine, calendar: cal)!
+check("same Thursday and time joins", "\(branch.matches(start: date(2026, 8, 13, 7, 0), end: date(2026, 8, 13, 9, 0), calendar: cal))", "true")
+check("Monday stays another branch", "\(branch.matches(start: date(2026, 8, 3, 7, 0), end: date(2026, 8, 3, 9, 0), calendar: cal))", "false")
+check("different start stays another branch", "\(branch.matches(start: date(2026, 8, 13, 8, 0), end: date(2026, 8, 13, 10, 0), calendar: cal))", "false")
+check("different duration stays another branch", "\(branch.matches(start: date(2026, 8, 13, 7, 0), end: date(2026, 8, 13, 8, 30), calendar: cal))", "false")
+let movedBranch = BranchSignature(start: date(2026, 8, 6, 8, 0), end: date(2026, 8, 6, 10, 0), calendar: cal)!
+check("destination time identifies an existing one-off", "\(movedBranch.matches(start: date(2026, 8, 13, 8, 0), end: date(2026, 8, 13, 10, 0), calendar: cal))", "true")
+
 print("\nDuration formatting")
 check("90 min",  DurationFormatter.string(90 * 60),  "1h 30m")
 check("60 min",  DurationFormatter.string(60 * 60),  "1h 00m")

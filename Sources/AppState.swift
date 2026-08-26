@@ -44,6 +44,9 @@ final class AppState: ObservableObject {
     @Published private var feedbackVisible: [String: Bool] = [:]
     /// "calendarID|recordID" -> checked
     @Published private var feedbackChecks: [String: Bool] = [:]
+    /// The Dock badge is global rather than month-scoped, so it reflects every
+    /// feedback item that has been introduced into the user's tracked months.
+    @Published private(set) var dockBadgeCount = 0
 
     /// Bumped to ask the table to scroll somewhere.
     @Published private(set) var scrollRequestID: Int = 0
@@ -311,7 +314,10 @@ final class AppState: ObservableObject {
 
         clockTimer = Timer.publish(every: 60, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] tick in self?.clockTick = tick }
+            .sink { [weak self] tick in
+                self?.clockTick = tick
+                self?.refreshDockBadge()
+            }
     }
 
     // MARK: Access
@@ -370,7 +376,12 @@ final class AppState: ObservableObject {
     }
 
     func reloadCalendars() {
-        guard hasReadAccess else { calendars = []; records = []; return }
+        guard hasReadAccess else {
+            calendars = []; records = []
+            dockBadgeCount = 0
+            NSApplication.shared.dockTile.badgeLabel = nil
+            return
+        }
 
         let raw = store.calendars(for: .event)
         let ordered = raw.sorted { a, b in
@@ -400,6 +411,7 @@ final class AppState: ObservableObject {
         // default-on "remaining" switch have to be primed here.
         refreshRemainingCounts()
         if !calendars.isEmpty { onCalendarsLoaded?() }
+        refreshDockBadge()
         // Open on today rather than at the top of the month.
         jumpToToday()
     }
@@ -555,7 +567,13 @@ final class AppState: ObservableObject {
               let id = selectedCalendarID,
               let calendar = store.calendar(withIdentifier: id),
               let interval = monthInterval
-        else { records = []; invalidateDayCache(); return }
+        else {
+            records = []
+            dockBadgeCount = 0
+            NSApplication.shared.dockTile.badgeLabel = nil
+            invalidateDayCache()
+            return
+        }
 
         loadFeedbackPreferences(for: id)
         let fetched = EventMonthCalculator.auditedRecords(
@@ -563,6 +581,7 @@ final class AppState: ObservableObject {
         )
         seedFeedbackIfNeeded(calendarID: id, records: fetched)
         records = fetched
+        refreshDockBadge()
         invalidateDayCache()
     }
 
@@ -618,6 +637,7 @@ final class AppState: ObservableObject {
         guard let id = selectedCalendarID else { return }
         countShortByCalendar[id] = value
         defaults.set(value, forKey: Keys.countShortPrefix + id)
+        refreshDockBadge()
     }
 
     var isFeedbackColumnVisible: Bool {
@@ -656,6 +676,7 @@ final class AppState: ObservableObject {
         // Retire the legacy entry so the two can't disagree later.
         feedbackChecks[id + "|" + record.id] = nil
         saveFeedbackChecks(for: id)
+        refreshDockBadge()
     }
 
     private func saveFeedbackChecks(for calendarID: String) {
@@ -665,6 +686,47 @@ final class AppState: ObservableObject {
             slice[String(k.dropFirst(prefix.count))] = v
         }
         defaults.set(slice, forKey: Keys.feedbackChecksPrefix + calendarID)
+    }
+
+    /// Counts only months that have been initialised for feedback. This keeps
+    /// the first-run rule intact: old history stays out of the badge until its
+    /// month is opened and seeded, while newly finished sessions in a tracked
+    /// month appear immediately.
+    func refreshDockBadge() {
+        guard hasReadAccess,
+              let from = calculationCalendar.date(byAdding: .year, value: -3, to: Date())
+        else {
+            dockBadgeCount = 0
+            NSApplication.shared.dockTile.badgeLabel = nil
+            return
+        }
+
+        let now = Date()
+        var count = 0
+        var seen = Set<String>()
+        for choice in calendars {
+            guard let ekCalendar = ekCalendar(choice.id) else { continue }
+            loadFeedbackPreferences(for: choice.id)
+            let predicate = store.predicateForEvents(withStart: from, end: now, calendars: [ekCalendar])
+            for event in store.events(matching: predicate) {
+                guard let start = event.startDate, let end = event.endDate,
+                      !event.isAllDay, event.status != .canceled, end <= now,
+                      Int(end.timeIntervalSince(start)) >= 30 * 60 || (countShortByCalendar[choice.id] ?? false)
+                else { continue }
+
+                let year = calculationCalendar.component(.year, from: start)
+                let month = calculationCalendar.component(.month, from: start)
+                let seededKey = Keys.feedbackSeededPrefix + choice.id + "." + String(format: "%04d-%02d", year, month)
+                guard defaults.bool(forKey: seededKey) else { continue }
+
+                let stableID = EventMonthCalculator.stableIdentity(event)
+                let unique = choice.id + "|" + stableID
+                guard seen.insert(unique).inserted else { continue }
+                if feedbackChecks[unique] != true { count += 1 }
+            }
+        }
+        dockBadgeCount = count
+        NSApplication.shared.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
     }
 
     // MARK: Derived

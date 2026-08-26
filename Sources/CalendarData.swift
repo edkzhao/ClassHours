@@ -175,6 +175,87 @@ extension AppState {
         return best.values.sorted { $0.lastSeen > $1.lastSeen }
     }
 
+    // MARK: Branches
+
+    /// Occurrences in the same ClassHours series that follow the selected
+    /// weekday + time line. EventKit keeps detached occurrences under the
+    /// original external identifier, so matching the live dates makes one-off
+    /// exceptions join a branch without extra metadata in Calendar notes.
+    func branchOccurrences(of event: EKEvent, scope: EditScope,
+                           including joinedSignature: BranchSignature? = nil) -> [EKEvent] {
+        guard scope != .thisOccurrence,
+              let start = event.startDate,
+              let end = event.endDate,
+              let signature = BranchSignature(start: start, end: end, calendar: calculationCalendar)
+        else { return [event] }
+
+        let now = Date()
+        guard let lower = calculationCalendar.date(byAdding: .year, value: -3, to: now),
+              let upper = calculationCalendar.date(byAdding: .year, value: 5, to: now)
+        else { return [event] }
+
+        let from = scope == .thisAndFollowing ? max(start, lower) : lower
+        let calendars = self.calendars.compactMap { ekCalendar($0.id) }
+        guard !calendars.isEmpty else { return [event] }
+
+        let seriesKeys = Set(seriesLookup?(event.seriesKey) ?? [event.seriesKey])
+        let predicate = store.predicateForEvents(withStart: from, end: upper, calendars: calendars)
+        var seen = Set<String>()
+        let matched = store.events(matching: predicate).filter { candidate in
+            guard let candidateStart = candidate.startDate, let candidateEnd = candidate.endDate,
+                  !candidate.isAllDay, candidate.status != .canceled,
+                  seriesKeys.contains(candidate.seriesKey),
+                  (signature.matches(start: candidateStart, end: candidateEnd, calendar: calculationCalendar)
+                   || joinedSignature?.matches(start: candidateStart, end: candidateEnd, calendar: calculationCalendar) == true)
+            else { return false }
+            let identity = EventMonthCalculator.occurrenceIdentity(candidate)
+            return seen.insert(identity).inserted
+        }
+        return matched.isEmpty ? [event] : matched.sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
+    }
+
+    func branchOccurrenceCount(of event: EKEvent) -> Int {
+        branchOccurrences(of: event, scope: .wholeSeries).count
+    }
+
+    // MARK: Conflict preview
+
+    func futureConflicts(for draft: SeriesDraft) -> [EventConflict] {
+        let planned = draft.occurrences(calendar: calculationCalendar).compactMap { occurrence -> (Date, Date)? in
+            guard let startMinutes = occurrence.span.start,
+                  let endMinutes = occurrence.span.resolvedEnd
+            else { return nil }
+            let day = calculationCalendar.startOfDay(for: occurrence.date)
+            guard let start = calculationCalendar.date(byAdding: .minute, value: startMinutes, to: day),
+                  let end = calculationCalendar.date(byAdding: .minute, value: endMinutes, to: day),
+                  end > start,
+                  start > Date()
+            else { return nil }
+            return (start, end)
+        }
+        guard let first = planned.map({ $0.0 }).min(), let last = planned.map({ $0.1 }).max() else { return [] }
+
+        let calendars = self.calendars.compactMap { ekCalendar($0.id) }
+        guard !calendars.isEmpty else { return [] }
+        let predicate = store.predicateForEvents(withStart: first, end: last, calendars: calendars)
+        var seen = Set<String>()
+        return store.events(matching: predicate).compactMap { event in
+            guard let start = event.startDate, let end = event.endDate,
+                  !event.isAllDay, event.status != .canceled,
+                  end > Date(), planned.contains(where: { start < $0.1 && end > $0.0 })
+            else { return nil }
+            let id = EventMonthCalculator.occurrenceIdentity(event)
+            guard seen.insert(id).inserted else { return nil }
+            let calendarID = event.calendar?.calendarIdentifier ?? ""
+            return EventConflict(id: id,
+                                 title: event.title?.isEmpty == false ? event.title! : "(Untitled)",
+                                 start: start,
+                                 end: end,
+                                 calendarTitle: self.calendars.first(where: { $0.id == calendarID })?.title ?? "Calendar")
+        }
+        .sorted { $0.start < $1.start }
+    }
+
     /// Fetch the EKEvent behind an occurrence, matched on its exact start so we
     /// edit the right instance of a recurring series.
     func event(forKey key: String) -> EKEvent? {

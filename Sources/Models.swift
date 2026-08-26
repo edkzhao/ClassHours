@@ -98,6 +98,46 @@ enum SeriesKey {
     }
 }
 
+/// One time line inside a ClassHours series. A branch is deliberately derived
+/// from the event itself rather than stored in Notes: a one-off event joins the
+/// matching branch as soon as its weekday and time range line up.
+struct BranchSignature: Hashable {
+    let weekday: Int
+    let startMinutes: Int
+    let durationMinutes: Int
+
+    init?(start: Date, end: Date, calendar: Calendar) {
+        let duration = Int(end.timeIntervalSince(start) / 60)
+        guard duration > 0 else { return nil }
+        weekday = calendar.component(.weekday, from: start)
+        startMinutes = TimeText.minutes(of: start, calendar)
+        durationMinutes = duration
+    }
+
+    func matches(start: Date, end: Date, calendar: Calendar) -> Bool {
+        calendar.component(.weekday, from: start) == weekday
+            && TimeText.minutes(of: start, calendar) == startMinutes
+            && Int(end.timeIntervalSince(start) / 60) == durationMinutes
+    }
+
+    func label(calendar: Calendar) -> String {
+        let symbols = calendar.shortWeekdaySymbols
+        let day = symbols.indices.contains(weekday - 1) ? symbols[weekday - 1] : ""
+        let end = (startMinutes + durationMinutes) % (24 * 60)
+        return "\(day) \(TimeText.hhmm(startMinutes))–\(TimeText.hhmm(end))"
+    }
+}
+
+/// A future event that overlaps an event being drafted. Conflicts are advisory:
+/// they help spot a collision without turning scheduling into a hard blocker.
+struct EventConflict: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let start: Date
+    let end: Date
+    let calendarTitle: String
+}
+
 enum DurationFormatter {
     /// "1h 30m" / "45m"
     static func string(_ seconds: Int) -> String {

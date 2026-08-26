@@ -329,6 +329,8 @@ private struct PanelChrome<Content: View, Footer: View>: View {
 
 // MARK: - Detail
 
+private enum EditTarget: Equatable { case branch, series }
+
 struct EventDetailPanel: View {
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var prefs: PrefsStore
@@ -342,23 +344,39 @@ struct EventDetailPanel: View {
     @State private var timeFocus = 0
     @State private var notes = SeriesNotes()
     @State private var loaded = false
+    @State private var targetPrompt: TargetPrompt?
     @State private var scopePrompt: ScopePrompt?
     /// What was on screen when the panel opened, so an untouched Save can just
     /// close instead of asking which occurrences to apply nothing to.
-    @State private var original: (title: String, date: Date, span: TimeSpan, notes: SeriesNotes)?
+    @State private var original: (title: String, date: Date, span: TimeSpan, notes: SeriesNotes, calendarID: String)?
     @State private var calendarID = ""
     @State private var seriesCount = 0
     @State private var position = 0
     @State private var remaining = 0
     @State private var seriesMinutes = 0
+    @State private var branchCount = 1
+    @State private var branchLabel = "This branch"
     @State private var openDate = false
 
-    private struct ScopePrompt: Identifiable { let id = UUID(); let deleting: Bool }
+    private struct TargetPrompt: Identifiable { let id = UUID(); let deleting: Bool }
+    private struct ScopePrompt: Identifiable {
+        let id = UUID()
+        let deleting: Bool
+        let target: EditTarget
+    }
     private var cal: Calendar { state.calculationCalendar }
 
     var body: some View {
         PanelChrome(title: "Event", onClose: onClose) {
             VStack(alignment: .leading, spacing: 14) {
+                field("Calendar") {
+                    Picker("", selection: $calendarID) {
+                        ForEach(state.writableCalendars) { Text($0.title).tag($0.id) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+
                 field("Event") {
                     TextField("", text: $title).textFieldStyle(.roundedBorder)
                 }
@@ -404,22 +422,36 @@ struct EventDetailPanel: View {
                 RoleMenus(calendarID: calendarID, notes: $notes)
             }
         } footer: {
-            if let prompt = scopePrompt {
+            if let prompt = targetPrompt {
+                BranchOrSeriesChooser(
+                    deleting: prompt.deleting,
+                    branchLabel: branchLabel,
+                    branchCount: branchCount,
+                    seriesCount: seriesCount,
+                    onChoose: { target in
+                        targetPrompt = nil
+                        scopePrompt = ScopePrompt(deleting: prompt.deleting, target: target)
+                    },
+                    onCancel: { targetPrompt = nil })
+            } else if let prompt = scopePrompt {
                 // Inline rather than a sheet: this panel already lives inside an
                 // overlay of a view that presents sheets, and the nested
                 // presentation silently never appeared.
-                ScopeChooser(deleting: prompt.deleting, seriesCount: seriesCount) { scope in
-                    apply(scope: scope, deleting: prompt.deleting)
+                ScopeChooser(deleting: prompt.deleting,
+                             count: prompt.target == .branch ? branchCount : seriesCount,
+                             noun: prompt.target == .branch ? "branch" : "series",
+                             alwaysOfferRanges: prompt.target == .branch) { scope in
+                    apply(scope: scope, deleting: prompt.deleting, target: prompt.target)
                     scopePrompt = nil
                     onClose()
                 } onCancel: { scopePrompt = nil }
             } else {
-                Button("Delete…") { scopePrompt = ScopePrompt(deleting: true) }
+                Button("Delete…") { targetPrompt = TargetPrompt(deleting: true) }
                     .buttonStyle(.plain)
                     .foregroundStyle(Palette.mark)
                 Spacer()
                 AccentButton(title: isDirty ? "Save…" : "Done") {
-                    if isDirty { scopePrompt = ScopePrompt(deleting: false) } else { onClose() }
+                    if isDirty { targetPrompt = TargetPrompt(deleting: false) } else { onClose() }
                 }
             }
         }
@@ -437,6 +469,7 @@ struct EventDetailPanel: View {
             || !cal.isDate(o.date, inSameDayAs: date)
             || o.span != span
             || o.notes != notes
+            || o.calendarID != calendarID
     }
 
     private func load() {
@@ -450,7 +483,8 @@ struct EventDetailPanel: View {
         if span.duration == nil { span.end = TimeText.minutes(of: ev.endDate, cal) }
         notes = SeriesNotes.decode(ev.notes)
         calendarID = ev.calendar?.calendarIdentifier ?? ""
-        original = (title, date, span, notes)
+        original = (title, date, span, notes, calendarID)
+        branchLabel = BranchSignature(start: ev.startDate, end: ev.endDate, calendar: cal)?.label(calendar: cal) ?? "This branch"
 
         // Series figures come from ClassHours membership, so events at
         // different times and durations still count as one series.
@@ -460,56 +494,27 @@ struct EventDetailPanel: View {
             position = (all.firstIndex { $0.start == ev.startDate } ?? 0) + 1
             remaining = all.filter { $0.start > ev.startDate }.count
             seriesMinutes = all.reduce(0) { $0 + $1.minutes }
+            branchCount = state.branchOccurrenceCount(of: ev)
         }
     }
 
-    private func apply(scope: EditScope, deleting: Bool) {
+    private func apply(scope: EditScope, deleting: Bool, target: EditTarget) {
         guard let ev = state.event(forKey: occurrenceKey) else { return }
         let writer = CalendarWriter(store: state.store, calendar: cal)
+        guard let targetCalendar = state.ekCalendar(calendarID) else {
+            state.reportError("Choose a calendar that allows changes.")
+            return
+        }
         // Remember the series before writing: EventKit can mint a new identifier
         // when it rewrites an event, which silently dropped it out of its series.
         let seriesBefore = series.seriesID(of: ev.seriesKey)
         do {
-            if deleting {
-                series.ungroup(ev.seriesKey)
-                try writer.delete(ev, scope: scope)
+            if target == .branch {
+                try applyBranch(ev, scope: scope, deleting: deleting, writer: writer,
+                                targetCalendar: targetCalendar)
             } else {
-                let day = cal.startOfDay(for: date)
-                // Added as minutes, so a class running past midnight lands on
-                // the following day rather than failing to resolve.
-                let s = span.start.map { cal.date(byAdding: .minute, value: $0, to: day) ?? ev.startDate }
-                    ?? ev.startDate
-                let e = span.resolvedEnd.map { cal.date(byAdding: .minute, value: $0, to: day) ?? ev.endDate }
-                    ?? ev.endDate
-                // Only rewrite dates if you actually changed them, so a notes-only
-                // edit can't drag the rest of the series onto this date.
-                let movedInTime = original.map { !cal.isDate($0.date, inSameDayAs: date) || $0.span != span } ?? true
-                try writer.update(ev, scope: scope, title: title,
-                                  start: movedInTime ? s : nil, end: movedInTime ? e : nil, notes: notes)
-                if scope == .wholeSeries {
-                    // Notes are a property of the series, so they reach every
-                    // member — including ones Apple Calendar keeps separate.
-                    let mine = ev.seriesKey
-                    var before: [AppState.SeriesUndo.Member] = []
-                    for sibling in series.siblings(of: mine) where sibling != mine {
-                        guard let other = state.store.calendarItems(withExternalIdentifier: sibling).first as? EKEvent
-                                ?? state.store.event(withIdentifier: sibling) else { continue }
-                        // Captured before the write, so it can be put back.
-                        before.append(.init(key: sibling,
-                                            title: other.title ?? "",
-                                            notes: other.notes ?? ""))
-                        other.title = title
-                        other.notes = notes.encoded()
-                        // Same rule: only a real recurrence takes .futureEvents.
-                        try state.store.save(other,
-                                             span: other.hasRecurrenceRules ? .futureEvents : .thisEvent,
-                                             commit: false)
-                    }
-                    try state.store.commit()
-                    state.offerUndo(.init(
-                        message: "Updated \(before.count + 1) events in the series",
-                        members: before))
-                }
+                try applySeries(ev, scope: scope, deleting: deleting, writer: writer,
+                                targetCalendar: targetCalendar)
             }
             // Safety net: re-register in case the key moved anyway.
             if let sid = seriesBefore { series.group([ev.seriesKey], into: sid) }
@@ -519,13 +524,100 @@ struct EventDetailPanel: View {
             state.reportError(error.localizedDescription)
         }
     }
+
+    private func applySeries(_ event: EKEvent, scope: EditScope, deleting: Bool,
+                             writer: CalendarWriter, targetCalendar: EKCalendar) throws {
+        if deleting {
+            series.ungroup(event.seriesKey)
+            try writer.delete(event, scope: scope)
+            return
+        }
+
+        let (start, end, movedInTime) = editedTimes(for: event, day: date)
+        try writer.update(event, scope: scope, title: title,
+                          start: movedInTime ? start : nil, end: movedInTime ? end : nil,
+                          notes: notes, calendar: targetCalendar)
+        guard scope == .wholeSeries else { return }
+
+        // Notes and calendar membership are properties of the ClassHours
+        // series, even when it is represented by several EventKit recurrences.
+        let mine = event.seriesKey
+        var before: [AppState.SeriesUndo.Member] = []
+        for sibling in series.siblings(of: mine) where sibling != mine {
+            guard let other = state.store.calendarItems(withExternalIdentifier: sibling).first as? EKEvent
+                    ?? state.store.event(withIdentifier: sibling) else { continue }
+            before.append(.init(key: sibling, title: other.title ?? "", notes: other.notes ?? ""))
+            other.title = title
+            other.notes = notes.encoded()
+            if original?.calendarID != calendarID { other.calendar = targetCalendar }
+            try state.store.save(other,
+                                 span: other.hasRecurrenceRules ? .futureEvents : .thisEvent,
+                                 commit: false)
+        }
+        if !before.isEmpty {
+            try state.store.commit()
+            state.offerUndo(.init(message: "Updated \(before.count + 1) events in the series", members: before))
+        }
+    }
+
+    private func applyBranch(_ event: EKEvent, scope: EditScope, deleting: Bool,
+                             writer: CalendarWriter, targetCalendar: EKCalendar) throws {
+        let targetSignature: BranchSignature?
+        if deleting {
+            targetSignature = nil
+        } else {
+            let (start, end, _) = editedTimes(for: event, day: date)
+            targetSignature = BranchSignature(start: start, end: end, calendar: cal)
+        }
+        // Include an already-existing one-off on the destination time line.
+        // This makes moving Thu 07:00–09:00 to Thu 08:00–10:00 absorb an
+        // existing Thu 08:00–10:00 occurrence in the same series.
+        let matches = state.branchOccurrences(of: event, scope: scope,
+                                              including: targetSignature)
+        let dayShift = original.map {
+            cal.dateComponents([.day], from: cal.startOfDay(for: $0.date), to: cal.startOfDay(for: date)).day ?? 0
+        } ?? 0
+
+        for match in matches {
+            if deleting {
+                try writer.delete(match, scope: .thisOccurrence)
+                continue
+            }
+            let baseDay: Date
+            if scope == .thisOccurrence {
+                baseDay = date
+            } else {
+                baseDay = cal.date(byAdding: .day, value: dayShift, to: match.startDate) ?? match.startDate
+            }
+            let (start, end, movedInTime) = editedTimes(for: match, day: baseDay)
+            try writer.update(match, scope: .thisOccurrence, title: title,
+                              start: movedInTime ? start : nil, end: movedInTime ? end : nil,
+                              notes: notes, calendar: targetCalendar)
+        }
+    }
+
+    /// Reuses the chosen clock time on each branch occurrence's own date. A
+    /// date edit shifts every chosen occurrence by the same number of days;
+    /// notes, roles, names and calendar moves leave dates untouched.
+    private func editedTimes(for event: EKEvent, day: Date) -> (Date, Date, Bool) {
+        let fallbackStart = event.startDate ?? day
+        let fallbackEnd = event.endDate ?? fallbackStart
+        let start = span.start.flatMap { cal.date(byAdding: .minute, value: $0, to: cal.startOfDay(for: day)) }
+            ?? fallbackStart
+        let end = span.resolvedEnd.flatMap { cal.date(byAdding: .minute, value: $0, to: cal.startOfDay(for: day)) }
+            ?? fallbackEnd
+        let moved = original.map { !cal.isDate($0.date, inSameDayAs: date) || $0.span != span } ?? true
+        return (start, end, moved)
+    }
 }
 
 // MARK: - Scope sheet
 
 struct ScopeChooser: View {
     let deleting: Bool
-    let seriesCount: Int
+    let count: Int
+    let noun: String
+    let alwaysOfferRanges: Bool
     let onChoose: (EditScope) -> Void
     let onCancel: () -> Void
 
@@ -539,10 +631,10 @@ struct ScopeChooser: View {
                     .font(Typo.sans(12)).foregroundStyle(Palette.ink3)
             }
             choice(.thisOccurrence, "This occurrence only",
-                   seriesCount > 1 ? "The other \(seriesCount - 1) are untouched." : "")
-            if seriesCount > 1 {
-                choice(.thisAndFollowing, "This and all following", "Earlier ones keep what they had.")
-                choice(.wholeSeries, "The whole series", "All \(seriesCount) occurrences.")
+                   count > 1 ? "The other \(count - 1) in this \(noun) are untouched." : "")
+            if count > 1 || alwaysOfferRanges {
+                choice(.thisAndFollowing, "This and all following", "Earlier \(noun) occurrences keep what they had.")
+                choice(.wholeSeries, "The whole \(noun)", "All \(count) matching occurrences.")
             }
         }
         .frame(maxWidth: .infinity)
@@ -556,6 +648,46 @@ struct ScopeChooser: View {
                 if !detail.isEmpty {
                     Text(detail).font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
                 }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(Palette.surface2)
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Palette.rule, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct BranchOrSeriesChooser: View {
+    let deleting: Bool
+    let branchLabel: String
+    let branchCount: Int
+    let seriesCount: Int
+    let onChoose: (EditTarget) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(deleting ? "Delete from…" : "Apply changes to…")
+                    .font(Typo.sans(13, .semibold))
+                Spacer()
+                Button("Cancel", action: onCancel).buttonStyle(.plain)
+                    .font(Typo.sans(12)).foregroundStyle(Palette.ink3)
+            }
+            choice(.branch, "This branch", "\(branchLabel) · \(branchCount) occurrence\(branchCount == 1 ? "" : "s")")
+            choice(.series, "The series", "All linked schedules; choose a scope next.")
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func choice(_ target: EditTarget, _ title: String, _ detail: String) -> some View {
+        Button { onChoose(target) } label: {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(Typo.sans(13.5, .semibold))
+                    .foregroundStyle(deleting ? Palette.mark : Palette.ink)
+                Text(detail).font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12).padding(.vertical, 9)
@@ -590,6 +722,7 @@ struct ComposerPanel: View {
     /// as touching a series that already exists.
     @State private var adopted: ClassSuggestion?
     @State private var conflict = false
+    @State private var conflictPreview: [EventConflict] = []
     @State private var openDate: DateTarget?
     /// Bumped per session to jump into its time boxes once its date is set.
     @State private var timeFocus: [UUID: Int] = [:]
@@ -713,6 +846,7 @@ struct ComposerPanel: View {
                     Eyebrow(text: "Will create")
                     preview
                 }
+                if !conflictPreview.isEmpty { conflictList }
 
                 Divider().overlay(Palette.rule).padding(.vertical, 2)
                 VStack(alignment: .leading, spacing: 5) {
@@ -743,11 +877,13 @@ struct ComposerPanel: View {
         .onChange(of: draft.start) { _, start in
             if until < start { until = start }
         }
+        .onChange(of: conflictFingerprint) { _, _ in refreshConflictPreview() }
         .onAppear {
             guard draft.calendarID.isEmpty else { return }
             let writable = state.writableCalendars
             draft.calendarID = writable.first { $0.id == prefs.lastUsedCalendarID }?.id
                 ?? writable.first?.id ?? ""
+            refreshConflictPreview()
         }
     }
 
@@ -892,6 +1028,17 @@ struct ComposerPanel: View {
         return d
     }
 
+    private var conflictFingerprint: String {
+        let occurrences = resolved.occurrences(calendar: cal)
+        return occurrences.map {
+            "\($0.date.timeIntervalSinceReferenceDate)|\($0.span.start ?? -1)|\($0.span.resolvedEnd ?? -1)"
+        }.joined(separator: ",")
+    }
+
+    private func refreshConflictPreview() {
+        conflictPreview = state.futureConflicts(for: resolved)
+    }
+
     private var preview: some View {
         let occ = resolved.occurrences(calendar: cal)
         let total = occ.reduce(0) { $0 + $1.span.minutes }
@@ -909,6 +1056,38 @@ struct ComposerPanel: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.surface2)
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Palette.rule, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+    }
+
+    private var conflictList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Palette.mark)
+                Eyebrow(text: "Conflicts with future events")
+            }
+            Text("These overlaps will not block creation.")
+                .font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
+            ForEach(conflictPreview.prefix(6)) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.title).font(Typo.sans(12.5, .medium)).lineLimit(1)
+                        Text("\(dateLabel(item.start)) · \(TimeText.hhmm(TimeText.minutes(of: item.start, cal)))–\(TimeText.hhmm(TimeText.minutes(of: item.end, cal))) · \(item.calendarTitle)")
+                            .font(Typo.mono(10.5)).foregroundStyle(Palette.ink3).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 2)
+            }
+            if conflictPreview.count > 6 {
+                Text("+ \(conflictPreview.count - 6) more")
+                    .font(Typo.sans(11.5)).foregroundStyle(Palette.ink3)
+            }
+        }
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.surface2)
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Palette.rule, lineWidth: 1))

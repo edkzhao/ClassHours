@@ -88,10 +88,12 @@ struct CalendarWriter {
     // MARK: Edit
 
     func update(_ event: EKEvent, scope: EditScope,
-                title: String?, start: Date?, end: Date?, notes: SeriesNotes?) throws {
+                title: String?, start: Date?, end: Date?, notes: SeriesNotes?,
+                calendar targetCalendar: EKCalendar? = nil) throws {
         let target = try resolve(event, scope: scope)
         if let title { target.title = title }
         if let notes { target.notes = notes.encoded() }
+        if let targetCalendar { target.calendar = targetCalendar }
         if let start, let end {
             // Preserve the occurrence's own day when only times changed.
             target.startDate = start

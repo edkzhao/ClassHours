@@ -142,6 +142,22 @@ they flip together rather than one going stale at the month boundary.
   so nothing is tinted over. Today's own jump doesn't pulse: it happens on every
   launch, and a flash there would just be noise.
 
+## Editing branches
+
+A ClassHours series can contain several schedules. When you save or delete an
+event, first choose **This branch** or **The series**. A branch is the matching
+weekday and time range — for example, Thursday 19:00–21:00 — so changing that
+branch does not alter a Monday 10:00–12:00 branch in the same series.
+
+The next choice is the usual scope: this occurrence, this and all following,
+or the whole selected branch/series. Branch changes apply to titles, times,
+notes, roles, deletion, and calendar moves. An existing one-off event joins a
+branch automatically when its weekday and time range match.
+
+The New Event preview also lists future overlaps before creation. They are
+advisory only: creation remains available. The macOS Dock badge shows the total
+unchecked feedback across feedback months that have already been opened.
+
 ## Sidebar
 
 Collapsible, so the window can be dragged genuinely small. Toggle it with the
