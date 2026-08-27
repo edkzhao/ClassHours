@@ -201,6 +201,89 @@ let mondayEight = RepeatPlanner.occurrences(patterns: [mondayPattern], end: .cou
 check("branch count is independent", "\(mondayEight.count)", "8")
 check("eighth Monday lands in September", "\(cal.component(.day, from: mondayEight.last!.start))", "21")
 
+let shortened = RepeatPlanner.occurrences(patterns: [mondayPattern, wednesdayPattern],
+                                          end: .count(6), calendar: cal)
+let shortenedPlan = RepeatEditPlan.make(baseline: repeatEight, desired: shortened,
+                                        scheduleChanged: false)
+check("shortening keeps the first six occurrences", "\(shortenedPlan.unchanged.count)", "6")
+check("shortening removes the last two occurrences", "\(shortenedPlan.removed.count)", "2")
+check("shortening adds no conflict-preview dates",
+      "\(shortenedPlan.futureConflictCandidates(asOf: date(2026, 8, 1, 0, 0)).count)", "0")
+let extended = RepeatPlanner.occurrences(patterns: [mondayPattern, wednesdayPattern],
+                                         end: .count(10), calendar: cal)
+let extendedPlan = RepeatEditPlan.make(baseline: repeatEight, desired: extended,
+                                       scheduleChanged: false)
+check("an extension previews only its two new dates",
+      "\(extendedPlan.futureConflictCandidates(asOf: date(2026, 8, 1, 0, 0)).count)", "2")
+
+let fridayPattern = WeeklyRepeatPattern(id: "friday", firstStart: date(2026, 8, 28, 17, 30),
+                                        weekdays: [6], startMinutes: 17 * 60 + 30,
+                                        durationMinutes: 90)
+let throughDecember = RepeatPlanner.occurrences(patterns: [fridayPattern],
+                                                end: .until(date(2026, 12, 11, 0, 0)), calendar: cal)
+let throughSeptember = RepeatPlanner.occurrences(patterns: [fridayPattern],
+                                                 end: .until(date(2026, 9, 4, 0, 0)), calendar: cal)
+let earlierUntilPlan = RepeatEditPlan.make(baseline: throughDecember,
+                                           desired: throughSeptember,
+                                           scheduleChanged: false)
+check("Dec 11 to Sep 4 is a removal-only edit", "\(earlierUntilPlan.added.count)", "0")
+check("Dec 11 to Sep 4 has no conflicts to preview",
+      "\(earlierUntilPlan.futureConflictCandidates(asOf: date(2026, 8, 27, 0, 0)).count)", "0")
+
+let groupedOneOff = PlannedRepeatOccurrence(patternID: "sunday-one-off",
+                                             start: date(2026, 8, 23, 14, 30),
+                                             end: date(2026, 8, 23, 16, 0))
+let mixedBaseline = throughDecember + [groupedOneOff]
+let clippedMixedSeries = RepeatScheduleContractor.clip(
+    mixedBaseline, to: .until(date(2026, 9, 4, 0, 0)), calendar: cal)
+let mixedContractionPlan = RepeatEditPlan.make(baseline: mixedBaseline,
+                                               desired: clippedMixedSeries,
+                                               scheduleChanged: false)
+check("shortening does not convert a grouped one-off into weekly repeats",
+      "\(mixedContractionPlan.added.count)", "0")
+check("a Sunday one-off does not invent an Aug 30 occurrence",
+      "\(clippedMixedSeries.contains { $0.start == date(2026, 8, 30, 14, 30) })", "false")
+
+let providerRounded = [PlannedRepeatOccurrence(
+    patternID: "friday",
+    start: date(2026, 8, 28, 17, 30).addingTimeInterval(18),
+    end: date(2026, 8, 28, 19, 0).addingTimeInterval(18))]
+let exactMinute = [PlannedRepeatOccurrence(patternID: "friday",
+                                           start: date(2026, 8, 28, 17, 30),
+                                           end: date(2026, 8, 28, 19, 0))]
+let roundedPlan = RepeatEditPlan.make(baseline: providerRounded, desired: exactMinute,
+                                      scheduleChanged: false)
+check("provider seconds do not create a phantom addition", "\(roundedPlan.added.count)", "0")
+
+let detachedIdentity = throughDecember.map {
+    PlannedRepeatOccurrence(patternID: "detached-\($0.patternID)",
+                            start: $0.start.addingTimeInterval(18),
+                            end: $0.end.addingTimeInterval(18))
+}
+let regroupedIdentity = throughSeptember.map {
+    PlannedRepeatOccurrence(patternID: "master-\($0.patternID)",
+                            start: $0.start,
+                            end: $0.end)
+}
+let regroupedShortening = RepeatEditPlan.make(baseline: detachedIdentity,
+                                              desired: regroupedIdentity,
+                                              scheduleChanged: false)
+check("detached provider IDs do not turn retained dates into additions",
+      "\(regroupedShortening.added.count)", "0")
+check("shortening across regrouped IDs remains conflict-free",
+      "\(regroupedShortening.futureConflictCandidates(asOf: date(2026, 8, 27, 0, 0)).count)", "0")
+
+let movedSchedule = repeatEight.map {
+    PlannedRepeatOccurrence(patternID: $0.patternID,
+                            start: $0.start.addingTimeInterval(60 * 60),
+                            end: $0.end.addingTimeInterval(60 * 60))
+}
+let movedPlan = RepeatEditPlan.make(baseline: repeatEight, desired: movedSchedule,
+                                    scheduleChanged: true)
+check("moving a schedule records modifications", "\(movedPlan.modified.count)", "8")
+check("moved occurrences are checked for conflicts",
+      "\(movedPlan.futureConflictCandidates(asOf: date(2026, 8, 1, 0, 0)).count)", "8")
+
 print("\nDuration formatting")
 check("90 min",  DurationFormatter.string(90 * 60),  "1h 30m")
 check("60 min",  DurationFormatter.string(60 * 60),  "1h 00m")

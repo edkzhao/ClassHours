@@ -241,6 +241,100 @@ enum RecurrenceExpansionGuard {
     }
 }
 
+struct RepeatOccurrenceModification: Hashable {
+    let before: PlannedRepeatOccurrence
+    let after: PlannedRepeatOccurrence
+}
+
+enum RepeatScheduleContractor {
+    static func clip(_ baseline: [PlannedRepeatOccurrence],
+                     to end: SeriesEnd,
+                     calendar: Calendar) -> [PlannedRepeatOccurrence] {
+        switch end {
+        case .until(let cutoff):
+            let finalDay = calendar.startOfDay(for: cutoff)
+            return baseline.filter { calendar.startOfDay(for: $0.start) <= finalDay }
+                .sorted { $0.start < $1.start }
+        case .count(let count):
+            return Array(baseline.sorted { $0.start < $1.start }.prefix(max(1, count)))
+        }
+    }
+}
+
+/// The canonical description of a repeat edit. Both the preview and the
+/// EventKit reconciliation consume this diff, so an occurrence that already
+/// belongs to the old schedule can never be mistaken for a newly-added one.
+struct RepeatEditPlan: Hashable {
+    let unchanged: [PlannedRepeatOccurrence]
+    let removed: [PlannedRepeatOccurrence]
+    let added: [PlannedRepeatOccurrence]
+    let modified: [RepeatOccurrenceModification]
+
+    static func make(baseline: [PlannedRepeatOccurrence],
+                     desired: [PlannedRepeatOccurrence],
+                     scheduleChanged: Bool) -> RepeatEditPlan {
+        let old = baseline.sorted { $0.start < $1.start }
+        let revised = desired.sorted { $0.start < $1.start }
+        var unchanged: [PlannedRepeatOccurrence] = []
+        var removed: [PlannedRepeatOccurrence] = []
+        var added: [PlannedRepeatOccurrence] = []
+        var modified: [RepeatOccurrenceModification] = []
+
+        // EventKit identifiers are storage details, not schedule identity.
+        // Detached occurrences and ClassHours-grouped recurrence masters can
+        // legitimately use different identifiers for the same live session.
+        // Match the complete target schedule as a minute-precision multiset.
+        var oldByMinute = Dictionary(grouping: old.indices,
+                                     by: { minuteKey(old[$0].start) })
+        var matchedOld = Set<Int>()
+        var matchedNew = Set<Int>()
+        for newIndex in revised.indices {
+            let key = minuteKey(revised[newIndex].start)
+            guard var candidates = oldByMinute[key],
+                  let oldIndex = candidates.first(where: { !matchedOld.contains($0) })
+            else { continue }
+            candidates.removeAll { $0 == oldIndex }
+            oldByMinute[key] = candidates
+            matchedOld.insert(oldIndex)
+            matchedNew.insert(newIndex)
+            if scheduleChanged && minuteKey(old[oldIndex].end) != minuteKey(revised[newIndex].end) {
+                modified.append(.init(before: old[oldIndex], after: revised[newIndex]))
+            } else {
+                unchanged.append(old[oldIndex])
+            }
+        }
+
+        var unmatchedOld = old.indices.filter { !matchedOld.contains($0) }.map { old[$0] }
+        var unmatchedNew = revised.indices.filter { !matchedNew.contains($0) }.map { revised[$0] }
+        if scheduleChanged {
+            let pairCount = min(unmatchedOld.count, unmatchedNew.count)
+            for index in 0..<pairCount {
+                modified.append(.init(before: unmatchedOld[index], after: unmatchedNew[index]))
+            }
+            unmatchedOld.removeFirst(pairCount)
+            unmatchedNew.removeFirst(pairCount)
+        }
+        removed.append(contentsOf: unmatchedOld)
+        added.append(contentsOf: unmatchedNew)
+
+        return RepeatEditPlan(
+            unchanged: unchanged.sorted { $0.start < $1.start },
+            removed: removed.sorted { $0.start < $1.start },
+            added: added.sorted { $0.start < $1.start },
+            modified: modified.sorted { $0.after.start < $1.after.start })
+    }
+
+    func futureConflictCandidates(asOf now: Date) -> [PlannedRepeatOccurrence] {
+        (added + modified.map(\.after))
+            .filter { $0.end > now }
+            .sorted { $0.start < $1.start }
+    }
+
+    private static func minuteKey(_ date: Date) -> Int64 {
+        Int64((date.timeIntervalSinceReferenceDate / 60).rounded())
+    }
+}
+
 /// Small, in-memory-only undo history. Actions are intentionally closures so
 /// nothing is serialized: quitting the app drops the history by design.
 final class SessionUndoStack {
