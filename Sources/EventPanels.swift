@@ -612,8 +612,10 @@ struct EventDetailPanel: View {
 
     private func applyRepeatOnly() {
         guard let event = state.event(forKey: occurrenceKey) else { return }
+        let undo = state.recurrenceUndoAction(for: targetMasters(event))
         do {
             try applyRepeatBoundary(to: event)
+            if let undo { state.registerUndo(undo) }
             state.refresh()
             state.refreshRemainingCounts()
             onClose()
@@ -771,6 +773,18 @@ struct EventDetailPanel: View {
         // Remember the series before writing: EventKit can mint a new identifier
         // when it rewrites an event, which silently dropped it out of its series.
         let seriesBefore = series.seriesID(of: ev.seriesKey)
+        let recurrenceUndo = !deleting && repeatIsDirty
+            ? state.recurrenceUndoAction(for: targetMasters(ev))
+            : nil
+        let propertiesUndo: (() -> Void)?
+        if !deleting && ordinaryIsDirty {
+            let affected = target == .branch
+                ? state.branchOccurrences(of: ev, scope: scope)
+                : state.seriesEventOccurrences(of: ev, scope: scope)
+            propertiesUndo = state.eventPropertiesUndoAction(for: affected)
+        } else {
+            propertiesUndo = nil
+        }
         do {
             // The repeat boundary belongs to the target as it existed when the
             // panel opened. Apply it before time edits create detached EventKit
@@ -785,6 +799,10 @@ struct EventDetailPanel: View {
             }
             // Safety net: re-register in case the key moved anyway.
             if let sid = seriesBefore { series.group([ev.seriesKey], into: sid) }
+            let undoActions = [recurrenceUndo, propertiesUndo].compactMap { $0 }
+            if !undoActions.isEmpty {
+                state.registerUndo { undoActions.forEach { $0() } }
+            }
             state.refresh()
             state.refreshRemainingCounts()
         } catch {
@@ -1462,8 +1480,7 @@ struct ComposerPanel: View {
         }
         guard !before.isEmpty else { return }
         try state.store.commit()
-        state.offerUndo(.init(message: "Updated \(before.count) events in the series",
-                              members: before))
+        state.offerUndo(.init(members: before))
     }
 }
 

@@ -110,6 +110,18 @@ struct CalendarWriter {
     func updateRecurrenceEnd(_ event: EKEvent, end: SeriesEnd) throws {
         let target = try resolve(event, scope: .wholeSeries)
         let wasRecurring = target.hasRecurrenceRules
+        let seriesKeyBefore = target.seriesKey
+        let queryUpper: Date
+        switch end {
+        case .count:
+            queryUpper = calendar.startOfDay(for: Date())
+        case .until(let date):
+            queryUpper = calendar.date(byAdding: .day, value: 1,
+                                       to: calendar.startOfDay(for: date)) ?? date
+        }
+        let before = Set(recurrenceOccurrences(of: target, seriesKey: seriesKeyBefore,
+                                               through: queryUpper)
+            .map(EventMonthCalculator.stableIdentity))
         let newEnd: EKRecurrenceEnd
         switch end {
         case .count(let count):
@@ -134,6 +146,38 @@ struct CalendarWriter {
             ]
         }
         try store.save(target, span: wasRecurring ? .futureEvents : .thisEvent, commit: true)
+
+        // Extending an EventKit rule from an old master can lazily materialise
+        // sessions between the old boundary and today. Preserve every
+        // occurrence that existed before the edit, but turn only the newly
+        // introduced past dates into exceptions. Future dates remain governed
+        // by the new end boundary.
+        let after = recurrenceOccurrences(of: target, seriesKey: target.seriesKey,
+                                          through: queryUpper)
+        let accidental = RecurrenceExpansionGuard.accidentalPastIDs(
+            before: before,
+            after: after.compactMap { occurrence in
+                guard let start = occurrence.startDate else { return nil }
+                return (EventMonthCalculator.stableIdentity(occurrence), start)
+            },
+            today: Date(), calendar: calendar)
+        guard !accidental.isEmpty else { return }
+        for occurrence in after where accidental.contains(EventMonthCalculator.stableIdentity(occurrence)) {
+            try store.remove(occurrence, span: .thisEvent, commit: false)
+        }
+        try store.commit()
+    }
+
+    private func recurrenceOccurrences(of event: EKEvent, seriesKey: String,
+                                       through upper: Date) -> [EKEvent] {
+        guard let ekCalendar = event.calendar, let start = event.startDate else { return [] }
+        let lower = calendar.date(byAdding: .day, value: -1, to: start) ?? start
+        let end = max(upper, calendar.startOfDay(for: Date()))
+        return store.events(matching: store.predicateForEvents(
+            withStart: lower, end: end, calendars: [ekCalendar]))
+            .filter {
+                $0.seriesKey == seriesKey && !$0.isAllDay && $0.status != .canceled
+            }
     }
 
     func delete(_ event: EKEvent, scope: EditScope) throws {

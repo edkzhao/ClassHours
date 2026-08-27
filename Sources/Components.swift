@@ -436,39 +436,6 @@ struct InlineLinkText: NSViewRepresentable {
     }
 }
 
-/// The short-lived offer to put a series-wide change back.
-struct UndoBar: View {
-    let undo: AppState.SeriesUndo
-    let onUndo: () -> Void
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Text(undo.message)
-                .font(Typo.sans(13))
-                .foregroundStyle(.white)
-
-            Button("Undo", action: onUndo)
-                .buttonStyle(.plain)
-                .font(Typo.sans(13, .semibold))
-                .foregroundStyle(Palette.accent)
-
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.6))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-        .background(Palette.readoutA)
-        .clipShape(Capsule())
-        .shadow(color: Color(hex: 0x1E2826).opacity(0.28), radius: 14, y: 5)
-        .padding(.bottom, 22)
-    }
-}
-
 /// Segmented control in the app's own palette.
 ///
 /// Replaces `.pickerStyle(.segmented)`, which drops a system-blue capsule into

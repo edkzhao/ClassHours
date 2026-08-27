@@ -521,6 +521,32 @@ do {
           "\(DayRingMath.ordered(unsorted).first!.start)", "540")
 }
 
+print("\nRepeat-boundary guard and session undo")
+do {
+    let before: Set<String> = ["kept"]
+    let added = RecurrenceExpansionGuard.accidentalPastIDs(
+        before: before,
+        after: [
+            ("kept", date(2026, 8, 12, 9, 0)),
+            ("retroactive", date(2026, 8, 20, 9, 0)),
+            ("future", date(2026, 9, 3, 9, 0))
+        ],
+        today: date(2026, 8, 27, 12, 0), calendar: cal)
+    check("only newly materialised past recurrence is removed",
+          added.sorted().joined(separator: ","), "retroactive")
+
+    let undo = SessionUndoStack(limit: 3)
+    var restored: [Int] = []
+    undo.register { restored.append(1) }
+    undo.register { restored.append(2) }
+    undo.register { restored.append(3) }
+    undo.register { restored.append(4) }
+    check("undo history holds three actions", "\(undo.count)", "3")
+    _ = undo.undo(); _ = undo.undo(); _ = undo.undo()
+    check("undo is newest-first and drops the fourth-oldest", "\(restored)", "[4, 3, 2]")
+    check("empty undo reports no action", "\(undo.undo())", "false")
+}
+
 
 print("")
 if failures == 0 {

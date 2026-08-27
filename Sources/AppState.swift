@@ -117,44 +117,98 @@ final class AppState: ObservableObject {
         dayCache.removeAll()
         historyCache.removeAll()
     }
-    /// Set by the calendar page so a sidebar right-click can open settings.
-    /// A just-completed change that swept a whole series, offered back for a
-    /// few seconds.
-    ///
-    /// Restores names and notes across the members it touched. Times are
-    /// deliberately not restored: applying a time change to a recurrence splits
-    /// it in EventKit, and putting that back together is not reliable.
-    struct SeriesUndo: Identifiable {
+    /// A lightweight in-session undo record for edits that sweep a logical
+    /// ClassHours series.
+    struct SeriesUndo {
         struct Member {
             let key: String
             let title: String
             let notes: String
         }
-        let id = UUID()
-        let message: String
         let members: [Member]
     }
 
-    @Published var pendingUndo: SeriesUndo?
-    private var undoTimer: Timer?
+    private struct RecurrenceUndo {
+        struct Member {
+            let eventIdentifier: String
+            let externalIdentifier: String
+            let rules: [EKRecurrenceRule]?
+            let wasRecurring: Bool
+        }
+        let members: [Member]
+    }
+
+    private struct EventPropertiesUndo {
+        struct Member {
+            let event: EKEvent
+            let title: String?
+            let notes: String?
+            let calendar: EKCalendar?
+            let start: Date?
+            let end: Date?
+        }
+        let members: [Member]
+    }
+
+    private let undoHistory = SessionUndoStack(limit: 3)
+    private var undoShortcutMonitor: Any?
 
     func offerUndo(_ undo: SeriesUndo) {
         guard !undo.members.isEmpty else { return }
-        pendingUndo = undo
-        undoTimer?.invalidate()
-        undoTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.dismissUndo() }
+        registerUndo { [weak self] in self?.restore(undo) }
+    }
+
+    func recurrenceUndoAction(for events: [EKEvent]) -> (() -> Void)? {
+        var seen = Set<String>()
+        let members = events.compactMap { event -> RecurrenceUndo.Member? in
+            guard let identifier = event.eventIdentifier,
+                  seen.insert(identifier).inserted
+            else { return nil }
+            return .init(eventIdentifier: identifier,
+                         externalIdentifier: event.calendarItemExternalIdentifier ?? "",
+                         rules: copiedRules(event.recurrenceRules),
+                         wasRecurring: event.hasRecurrenceRules)
+        }
+        guard !members.isEmpty else { return nil }
+        let undo = RecurrenceUndo(members: members)
+        return { [weak self] in self?.restore(undo) }
+    }
+
+    func eventPropertiesUndoAction(for events: [EKEvent]) -> (() -> Void)? {
+        var seen = Set<String>()
+        let members = events.compactMap { event -> EventPropertiesUndo.Member? in
+            let key = event.eventIdentifier ?? ObjectIdentifier(event).debugDescription
+            guard seen.insert(key).inserted else { return nil }
+            return .init(event: event, title: event.title, notes: event.notes,
+                         calendar: event.calendar, start: event.startDate, end: event.endDate)
+        }
+        guard !members.isEmpty else { return nil }
+        let undo = EventPropertiesUndo(members: members)
+        return { [weak self] in self?.restore(undo) }
+    }
+
+    func registerUndo(_ action: @escaping () -> Void) {
+        undoHistory.register(action)
+    }
+
+    func installUndoShortcut() {
+        guard undoShortcutMonitor == nil else { return }
+        undoShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard modifiers == [.command],
+                  event.charactersIgnoringModifiers?.lowercased() == "z",
+                  !(NSApp.keyWindow?.firstResponder is NSTextView)
+            else { return event }
+            Task { @MainActor in self?.undoLastOperation() }
+            return nil
         }
     }
 
-    func dismissUndo() {
-        undoTimer?.invalidate(); undoTimer = nil
-        pendingUndo = nil
+    func undoLastOperation() {
+        _ = undoHistory.undo()
     }
 
-    func performUndo() {
-        guard let undo = pendingUndo else { return }
-        dismissUndo()
+    private func restore(_ undo: SeriesUndo) {
         var restored = 0
         for member in undo.members {
             guard let ev = store.calendarItems(withExternalIdentifier: member.key).first as? EKEvent
@@ -169,6 +223,49 @@ final class AppState: ObservableObject {
         if restored > 0 { try? store.commit() }
         refresh()
         refreshRemainingCounts()
+    }
+
+    private func restore(_ undo: RecurrenceUndo) {
+        var restored = 0
+        for member in undo.members {
+            let event = store.event(withIdentifier: member.eventIdentifier)
+                ?? store.calendarItems(withExternalIdentifier: member.externalIdentifier)
+                    .compactMap { $0 as? EKEvent }
+                    .first(where: { $0.hasRecurrenceRules })
+            guard let event else { continue }
+            event.recurrenceRules = copiedRules(member.rules)
+            try? store.save(event,
+                            span: member.wasRecurring ? .futureEvents : .thisEvent,
+                            commit: false)
+            restored += 1
+        }
+        if restored > 0 { try? store.commit() }
+        refresh()
+        refreshRemainingCounts()
+    }
+
+    private func restore(_ undo: EventPropertiesUndo) {
+        var restored = 0
+        for member in undo.members {
+            member.event.title = member.title
+            member.event.notes = member.notes
+            member.event.calendar = member.calendar
+            member.event.startDate = member.start
+            member.event.endDate = member.end
+            try? store.save(member.event, span: .thisEvent, commit: false)
+            restored += 1
+        }
+        if restored > 0 { try? store.commit() }
+        refresh()
+        refreshRemainingCounts()
+    }
+
+    private func copiedRules(_ rules: [EKRecurrenceRule]?) -> [EKRecurrenceRule]? {
+        rules?.compactMap { $0.copy() as? EKRecurrenceRule }
+    }
+
+    deinit {
+        if let undoShortcutMonitor { NSEvent.removeMonitor(undoShortcutMonitor) }
     }
 
     /// Fired once the calendar list is populated, so work that needs the
@@ -194,9 +291,9 @@ final class AppState: ObservableObject {
             refresh()
             refreshRemainingCounts()
             if !changed.isEmpty {
-                offerUndo(.init(
-                    message: "Renamed \(old) to \(new) on \(changed.count) event\(changed.count == 1 ? "" : "s")",
-                    members: changed.map { .init(key: $0.key, title: $0.title, notes: $0.notes) }))
+                offerUndo(.init(members: changed.map {
+                    .init(key: $0.key, title: $0.title, notes: $0.notes)
+                }))
             }
             return changed.count
         } catch {

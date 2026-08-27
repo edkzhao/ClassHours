@@ -224,6 +224,48 @@ enum RepeatPlanner {
     }
 }
 
+/// A recurrence is allowed to add future sessions when its boundary is moved,
+/// but must never retroactively fill dates that were absent before the change.
+/// EventKit expands recurrence rules lazily, so this small pure helper compares
+/// the pre-save and post-save views and identifies only those accidental past
+/// additions that need to become exceptions.
+enum RecurrenceExpansionGuard {
+    static func accidentalPastIDs(before: Set<String>,
+                                   after: [(id: String, start: Date)],
+                                   today: Date,
+                                   calendar: Calendar) -> Set<String> {
+        let floor = calendar.startOfDay(for: today)
+        return Set(after.compactMap { occurrence in
+            occurrence.start < floor && !before.contains(occurrence.id) ? occurrence.id : nil
+        })
+    }
+}
+
+/// Small, in-memory-only undo history. Actions are intentionally closures so
+/// nothing is serialized: quitting the app drops the history by design.
+final class SessionUndoStack {
+    private let limit: Int
+    private var actions: [() -> Void] = []
+
+    init(limit: Int = 3) {
+        self.limit = max(1, limit)
+    }
+
+    var count: Int { actions.count }
+
+    func register(_ action: @escaping () -> Void) {
+        actions.append(action)
+        if actions.count > limit { actions.removeFirst(actions.count - limit) }
+    }
+
+    @discardableResult
+    func undo() -> Bool {
+        guard let action = actions.popLast() else { return false }
+        action()
+        return true
+    }
+}
+
 enum DurationFormatter {
     /// "1h 30m" / "45m"
     static func string(_ seconds: Int) -> String {

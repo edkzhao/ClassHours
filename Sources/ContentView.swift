@@ -91,15 +91,6 @@ struct ContentView: View {
             }
         }
         .background(Palette.surface)
-        .overlay(alignment: .bottom) {
-            if let undo = state.pendingUndo {
-                UndoBar(undo: undo,
-                        onUndo: { state.performUndo() },
-                        onDismiss: { state.dismissUndo() })
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: state.pendingUndo?.id)
         .overlay {
             if state.settingsShown {
                 ZStack {
@@ -133,6 +124,7 @@ struct ContentView: View {
             pickerYear = state.selectedYear
             state.requestReadAccessIfNeeded()
             ClickAwayFocusReleaser.install()
+            state.installUndoShortcut()
             // macOS makes the first text field in a window the initial
             // responder, which left the search box permanently outlined with a
             // blinking caret. Start with nothing focused.
