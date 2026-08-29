@@ -593,23 +593,44 @@ struct EventDetailPanel: View {
     }
 
     private func repeatPatterns(for event: EKEvent) -> [WeeklyRepeatPattern] {
-        let selectedWeekday = cal.component(.weekday, from: event.startDate)
-        return targetMasters(event).map { repeatPattern(for: $0, selectedWeekday: selectedWeekday) }
+        targetMasters(event).map { repeatPattern(for: $0, event: event) }
     }
 
-    private func repeatPattern(for master: EKEvent, selectedWeekday: Int) -> WeeklyRepeatPattern {
+    private func repeatPattern(for master: EKEvent, event: EKEvent) -> WeeklyRepeatPattern {
+        if editTarget == .branch,
+           let eventStart = event.startDate,
+           let eventEnd = event.endDate,
+           let signature = BranchSignature(start: eventStart, end: eventEnd, calendar: cal) {
+            let firstStart = targetOccurrences(event)
+                .filter { $0.seriesKey == master.seriesKey }
+                .compactMap(\.startDate)
+                .min() ?? eventStart
+            return WeeklyRepeatPattern(
+                id: master.seriesKey,
+                firstStart: firstStart,
+                weekdays: [signature.weekday],
+                startMinutes: signature.startMinutes,
+                durationMinutes: signature.durationMinutes)
+        }
+
         let ruleDays = master.recurrenceRules?.flatMap { rule in
             rule.daysOfTheWeek?.map { $0.dayOfTheWeek.rawValue } ?? []
         } ?? []
-        let weekdays = editTarget == .branch
-            ? Set([selectedWeekday])
-            : Set(ruleDays.isEmpty ? [cal.component(.weekday, from: master.startDate)] : ruleDays)
         return WeeklyRepeatPattern(
             id: master.seriesKey,
             firstStart: master.startDate,
-            weekdays: weekdays,
+            weekdays: Set(ruleDays.isEmpty ? [cal.component(.weekday, from: master.startDate)] : ruleDays),
             startMinutes: TimeText.minutes(of: master.startDate, cal),
             durationMinutes: max(1, Int(master.endDate.timeIntervalSince(master.startDate) / 60)))
+    }
+
+    private func masterMatches(_ master: EKEvent, branch signature: BranchSignature) -> Bool {
+        signature.matches(start: master.startDate, end: master.endDate, calendar: cal)
+    }
+
+    private func requiresBranchReconciliation(_ master: EKEvent,
+                                              signature: BranchSignature) -> Bool {
+        recurrenceWeekdays(master).count > 1 || !masterMatches(master, branch: signature)
     }
 
     /// Reconstruct the schedule that exists before the edit from each
@@ -617,13 +638,19 @@ struct EventDetailPanel: View {
     /// This keeps deleted exceptions from looking like new work while still
     /// allowing a detached occurrence to participate in a branch edit.
     private func baselineRepeatOccurrences(for event: EKEvent) -> [PlannedRepeatOccurrence] {
-        let selectedWeekday = cal.component(.weekday, from: event.startDate)
         let live = targetOccurrences(event)
+        let branchSignature = BranchSignature(start: event.startDate, end: event.endDate, calendar: cal)
         var baseline: [PlannedRepeatOccurrence] = []
         for master in targetMasters(event) {
-            let pattern = repeatPattern(for: master, selectedWeekday: selectedWeekday)
-            baseline.append(contentsOf: RepeatPlanner.occurrences(
-                patterns: [pattern], end: recurrenceBoundary(of: master, event: event), calendar: cal))
+            let pattern = repeatPattern(for: master, event: event)
+            // A detached branch can have a different clock time from its
+            // recurrence master. Its own live occurrences are the only valid
+            // baseline; projecting the master's boundary onto that new time
+            // would invent sessions that never existed.
+            if editTarget != .branch || branchSignature.map({ masterMatches(master, branch: $0) }) == true {
+                baseline.append(contentsOf: RepeatPlanner.occurrences(
+                    patterns: [pattern], end: recurrenceBoundary(of: master, event: event), calendar: cal))
+            }
         }
         baseline.append(contentsOf: live.compactMap { occurrence in
             guard let start = occurrence.startDate, let end = occurrence.endDate else { return nil }
@@ -658,7 +685,9 @@ struct EventDetailPanel: View {
               let recurrenceEnd = rule.recurrenceEnd
         else { return .count(1) }
         if recurrenceEnd.occurrenceCount > 0 {
-            if editTarget == .branch, recurrenceWeekdays(master).count > 1 {
+            if editTarget == .branch,
+               let signature = BranchSignature(start: event.startDate, end: event.endDate, calendar: cal),
+               requiresBranchReconciliation(master, signature: signature) {
                 let count = targetOccurrences(event).filter { $0.seriesKey == master.seriesKey }.count
                 return .count(max(1, count))
             }
@@ -705,16 +734,32 @@ struct EventDetailPanel: View {
                                                   end: event.endDate, calendar: cal)
             for master in masters {
                 let live = occurrences.filter { $0.seriesKey == master.seriesKey }
-                if editTarget == .branch, recurrenceWeekdays(master).count > 1,
+                if editTarget == .branch,
                    let branchSignature {
-                    let retained = live.compactMap { occurrence -> PlannedRepeatOccurrence? in
-                        guard let start = occurrence.startDate, let end = occurrence.endDate,
-                              cal.startOfDay(for: start) <= finalDay
-                        else { return nil }
-                        return .init(patternID: master.seriesKey, start: start, end: end)
+                    if requiresBranchReconciliation(master, signature: branchSignature) {
+                        let retained = live.compactMap { occurrence -> PlannedRepeatOccurrence? in
+                            guard let start = occurrence.startDate, let end = occurrence.endDate,
+                                  cal.startOfDay(for: start) <= finalDay
+                            else { return nil }
+                            return .init(patternID: master.seriesKey, start: start, end: end)
+                        }
+                        try reconcileSharedRecurrence(master, signature: branchSignature,
+                                                      desired: retained, writer: writer)
+                    } else if master.hasRecurrenceRules {
+                        let needsClipping = live.contains {
+                            guard let start = $0.startDate else { return false }
+                            return cal.startOfDay(for: start) > finalDay
+                        }
+                        if needsClipping {
+                            try writer.updateRecurrenceEnd(master, end: .until(cutoff))
+                        }
+                    } else {
+                        for occurrence in live {
+                            guard let start = occurrence.startDate,
+                                  cal.startOfDay(for: start) > finalDay else { continue }
+                            try writer.delete(occurrence, scope: .thisOccurrence)
+                        }
                     }
-                    try reconcileSharedRecurrence(master, signature: branchSignature,
-                                                  desired: retained, writer: writer)
                 } else if master.hasRecurrenceRules {
                     let needsClipping = live.contains {
                         guard let start = $0.startDate else { return false }
@@ -744,14 +789,28 @@ struct EventDetailPanel: View {
                 let retained = live.filter {
                     retainedIDs.contains(EventMonthCalculator.occurrenceIdentity($0))
                 }
-                if editTarget == .branch, recurrenceWeekdays(master).count > 1,
+                if editTarget == .branch,
                    let branchSignature {
-                    let desired = retained.compactMap { occurrence -> PlannedRepeatOccurrence? in
-                        guard let start = occurrence.startDate, let end = occurrence.endDate else { return nil }
-                        return .init(patternID: master.seriesKey, start: start, end: end)
+                    if requiresBranchReconciliation(master, signature: branchSignature) {
+                        let desired = retained.compactMap { occurrence -> PlannedRepeatOccurrence? in
+                            guard let start = occurrence.startDate, let end = occurrence.endDate else { return nil }
+                            return .init(patternID: master.seriesKey, start: start, end: end)
+                        }
+                        try reconcileSharedRecurrence(master, signature: branchSignature,
+                                                      desired: desired, writer: writer)
+                    } else if master.hasRecurrenceRules, retained.count < live.count {
+                        if retained.isEmpty {
+                            series.ungroup(master.seriesKey)
+                            try writer.delete(master, scope: .wholeSeries)
+                        } else {
+                            try writer.updateRecurrenceEnd(master, end: .count(retained.count))
+                        }
+                    } else if !master.hasRecurrenceRules {
+                        for occurrence in live where
+                            !retainedIDs.contains(EventMonthCalculator.occurrenceIdentity(occurrence)) {
+                            try writer.delete(occurrence, scope: .thisOccurrence)
+                        }
                     }
-                    try reconcileSharedRecurrence(master, signature: branchSignature,
-                                                  desired: desired, writer: writer)
                 } else if master.hasRecurrenceRules, retained.count < live.count {
                     if retained.isEmpty {
                         series.ungroup(master.seriesKey)
@@ -773,10 +832,14 @@ struct EventDetailPanel: View {
         switch selectedRepeatEnd {
         case .until(let date):
             for master in masters {
-                if editTarget == .branch, recurrenceWeekdays(master).count > 1,
+                if editTarget == .branch,
                    let branchSignature {
-                    try reconcileSharedRecurrence(master, signature: branchSignature,
-                                                  end: .until(date), writer: writer)
+                    if requiresBranchReconciliation(master, signature: branchSignature) {
+                        try reconcileSharedRecurrence(master, signature: branchSignature,
+                                                      end: .until(date), writer: writer)
+                    } else {
+                        try writer.updateRecurrenceEnd(master, end: .until(date))
+                    }
                 } else {
                     try writer.updateRecurrenceEnd(master, end: .until(date))
                 }
@@ -786,10 +849,17 @@ struct EventDetailPanel: View {
                 patterns: repeatPatterns(for: event), total: total, calendar: cal)
             for (key, master) in byKey {
                 let count = allocations[key] ?? 0
-                if editTarget == .branch, recurrenceWeekdays(master).count > 1,
+                if editTarget == .branch,
                    let branchSignature {
-                    try reconcileSharedRecurrence(master, signature: branchSignature,
-                                                  count: count, writer: writer)
+                    if requiresBranchReconciliation(master, signature: branchSignature) {
+                        try reconcileSharedRecurrence(master, signature: branchSignature,
+                                                      count: count, writer: writer)
+                    } else if count > 0 {
+                        try writer.updateRecurrenceEnd(master, end: .count(count))
+                    } else {
+                        series.ungroup(master.seriesKey)
+                        try writer.delete(master, scope: .wholeSeries)
+                    }
                 } else if count > 0 {
                     try writer.updateRecurrenceEnd(master, end: .count(count))
                 } else {
@@ -820,8 +890,16 @@ struct EventDetailPanel: View {
 
     private func reconcileSharedRecurrence(_ master: EKEvent, signature: BranchSignature,
                                            end: SeriesEnd, writer: CalendarWriter) throws {
+        let upper: Date
+        switch end {
+        case .until(let date):
+            upper = date
+        case .count:
+            upper = cal.date(byAdding: .year, value: 5, to: Date()) ?? Date()
+        }
+        let firstStart = firstBranchStart(of: master, signature: signature, through: upper)
         let pattern = WeeklyRepeatPattern(id: master.seriesKey,
-                                          firstStart: master.startDate,
+                                          firstStart: firstStart,
                                           weekdays: [signature.weekday],
                                           startMinutes: signature.startMinutes,
                                           durationMinutes: signature.durationMinutes)
@@ -833,8 +911,10 @@ struct EventDetailPanel: View {
                                            count: Int, writer: CalendarWriter) throws {
         let desired: [PlannedRepeatOccurrence]
         if count > 0 {
+            let upper = cal.date(byAdding: .year, value: 5, to: Date()) ?? Date()
+            let firstStart = firstBranchStart(of: master, signature: signature, through: upper)
             let pattern = WeeklyRepeatPattern(id: master.seriesKey,
-                                              firstStart: master.startDate,
+                                              firstStart: firstStart,
                                               weekdays: [signature.weekday],
                                               startMinutes: signature.startMinutes,
                                               durationMinutes: signature.durationMinutes)
@@ -843,6 +923,18 @@ struct EventDetailPanel: View {
             desired = []
         }
         try reconcileSharedRecurrence(master, signature: signature, desired: desired, writer: writer)
+    }
+
+    private func firstBranchStart(of master: EKEvent, signature: BranchSignature,
+                                  through upper: Date) -> Date {
+        underlyingOccurrences(master, through: upper)
+            .compactMap { occurrence -> Date? in
+                guard let start = occurrence.startDate, let end = occurrence.endDate,
+                      BranchSignature(start: start, end: end, calendar: cal) == signature
+                else { return nil }
+                return start
+            }
+            .min() ?? master.startDate
     }
 
     /// Older ClassHours builds could put several weekdays into one EventKit
@@ -857,17 +949,18 @@ struct EventDetailPanel: View {
         let desiredLast = desired.map(\.end).max() ?? masterStart
         let initialUpper = max(fallbackUpper, desiredLast)
         let before = underlyingOccurrences(master, through: initialUpper)
-        let pattern = WeeklyRepeatPattern(id: master.seriesKey,
-                                          firstStart: masterStart,
-                                          weekdays: [signature.weekday],
-                                          startMinutes: signature.startMinutes,
-                                          durationMinutes: signature.durationMinutes)
         let selectedBefore = before.compactMap { occurrence -> PlannedRepeatOccurrence? in
             guard let start = occurrence.startDate, let end = occurrence.endDate,
                   BranchSignature(start: start, end: end, calendar: cal) == signature
             else { return nil }
             return .init(patternID: master.seriesKey, start: start, end: end)
         }
+        let firstStart = selectedBefore.map(\.start).min() ?? masterStart
+        let pattern = WeeklyRepeatPattern(id: master.seriesKey,
+                                          firstStart: firstStart,
+                                          weekdays: [signature.weekday],
+                                          startMinutes: signature.startMinutes,
+                                          durationMinutes: signature.durationMinutes)
         let ruleBoundary: SeriesEnd
         if let recurrenceEnd = master.recurrenceRules?.first?.recurrenceEnd,
            let endDate = recurrenceEnd.endDate {
@@ -877,8 +970,9 @@ struct EventDetailPanel: View {
             // edit its live selected-weekday count is the meaningful baseline.
             ruleBoundary = .count(max(1, selectedBefore.count))
         }
-        var baseline = RepeatPlanner.occurrences(patterns: [pattern],
-                                                 end: ruleBoundary, calendar: cal)
+        var baseline = masterMatches(master, branch: signature)
+            ? RepeatPlanner.occurrences(patterns: [pattern], end: ruleBoundary, calendar: cal)
+            : []
         baseline.append(contentsOf: selectedBefore)
         var baselineSeen = Set<Int64>()
         baseline = baseline.filter {

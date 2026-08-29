@@ -185,6 +185,24 @@ check("different duration stays another branch", "\(branch.matches(start: date(2
 let movedBranch = BranchSignature(start: date(2026, 8, 6, 8, 0), end: date(2026, 8, 6, 10, 0), calendar: cal)!
 check("destination time identifies an existing one-off", "\(movedBranch.matches(start: date(2026, 8, 13, 8, 0), end: date(2026, 8, 13, 10, 0), calendar: cal))", "true")
 
+print("\nBranch repeat extensions preserve the selected clock time")
+let tuesdayBranch = WeeklyRepeatPattern(id: "detached-tuesday", firstStart: date(2026, 12, 1, 7, 30),
+                                        weekdays: [3], startMinutes: 7 * 60 + 30,
+                                        durationMinutes: 120)
+let branchThroughDec1 = RepeatPlanner.occurrences(patterns: [tuesdayBranch],
+                                                    end: .until(date(2026, 12, 1, 0, 0)), calendar: cal)
+let branchThroughDec8 = RepeatPlanner.occurrences(patterns: [tuesdayBranch],
+                                                    end: .until(date(2026, 12, 8, 0, 0)), calendar: cal)
+let branchExtensionPlan = RepeatEditPlan.make(baseline: branchThroughDec1,
+                                              desired: branchThroughDec8,
+                                              scheduleChanged: false)
+let extendedBranch = branchExtensionPlan.added[0]
+let otherDec8Start = date(2026, 12, 8, 10, 10)
+check("one Dec 8 branch session is added", "\(branchExtensionPlan.added.count)", "1")
+check("the new branch starts at 7:30", "\(TimeText.hhmm(TimeText.minutes(of: extendedBranch.start, cal)))", "07:30")
+check("the new branch ends at 9:30", "\(TimeText.hhmm(TimeText.minutes(of: extendedBranch.end, cal)))", "09:30")
+check("a 10:10 event does not overlap the 7:30 branch", "\(otherDec8Start < extendedBranch.end)", "false")
+
 print("\nRepeat editing allocates a series count chronologically")
 let mondayPattern = WeeklyRepeatPattern(id: "monday", firstStart: date(2026, 8, 3, 8, 0),
                                         weekdays: [2], startMinutes: 8 * 60, durationMinutes: 120)
