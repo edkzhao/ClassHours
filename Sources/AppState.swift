@@ -750,12 +750,14 @@ final class AppState: ObservableObject {
     func setFeedbackColumnVisible(_ visible: Bool, _ id: String) {
         feedbackVisible[id] = visible
         defaults.set(visible, forKey: Keys.feedbackVisiblePrefix + id)
+        if id == selectedCalendarID { refreshDockBadge() }
     }
 
     func setFeedbackColumnVisible(_ visible: Bool) {
         guard let id = selectedCalendarID else { return }
         feedbackVisible[id] = visible
         defaults.set(visible, forKey: Keys.feedbackVisiblePrefix + id)
+        refreshDockBadge()
     }
 
     func isChecked(_ record: EventOccurrenceRecord) -> Bool {
@@ -798,6 +800,7 @@ final class AppState: ObservableObject {
             records: records,
             now: Date(),
             countShortEvents: countShortEvents,
+            feedbackEnabled: isFeedbackColumnVisible,
             isChecked: isChecked)
         dockBadgeCount = count
         NSApplication.shared.dockTile.badgeLabel = count > 0 ? "\(count)" : nil

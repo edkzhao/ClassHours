@@ -89,8 +89,10 @@ struct EventOccurrenceRecord: Identifiable, Hashable {
 enum FeedbackCounter {
     static func uncheckedCount(records: [EventOccurrenceRecord], now: Date,
                                countShortEvents: Bool,
+                               feedbackEnabled: Bool,
                                isChecked: (EventOccurrenceRecord) -> Bool) -> Int {
-        records.reduce(into: 0) { count, record in
+        guard feedbackEnabled else { return 0 }
+        return records.reduce(into: 0) { count, record in
             guard record.hasFinished(asOf: now),
                   (countShortEvents || !record.isShort),
                   !isChecked(record)

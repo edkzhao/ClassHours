@@ -80,8 +80,16 @@ let badgeCount = FeedbackCounter.uncheckedCount(
     records: [finishedUnchecked, finishedChecked, unfinished, genuinelyShort],
     now: date(2026, 8, 15, 12, 0),
     countShortEvents: false,
+    feedbackEnabled: true,
     isChecked: { $0.startDate == finishedChecked.startDate })
 check("only finished unchecked visible feedback counts", "\(badgeCount)", "1")
+let disabledBadgeCount = FeedbackCounter.uncheckedCount(
+    records: [finishedUnchecked],
+    now: date(2026, 8, 15, 12, 0),
+    countShortEvents: false,
+    feedbackEnabled: false,
+    isChecked: { _ in false })
+check("disabled feedback contributes no Dock badge", "\(disabledBadgeCount)", "0")
 
 print("\nHalf-open interval [start, end)")
 let atMidnight = date(2026, 9, 1, 0, 0)
