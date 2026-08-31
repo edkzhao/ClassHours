@@ -132,14 +132,31 @@ struct StatCard: View {
 
 // MARK: - Daily hours chart
 
+struct DayChartHover {
+    let anchor: Anchor<CGRect>
+    let date: String
+    let duration: String
+}
+
+struct DayChartHoverPreferenceKey: PreferenceKey {
+    static var defaultValue: DayChartHover?
+
+    static func reduce(value: inout DayChartHover?, nextValue: () -> DayChartHover?) {
+        if let next = nextValue() { value = next }
+    }
+}
+
 struct DayChart: View {
     let hours: [Double]
     let todayIndex: Int?
+    let monthStart: Date
+    let calendar: Calendar
     let onSelectDay: (Int) -> Void
 
     @State private var hoverIndex: Int?
 
     private var peak: Double { max(hours.max() ?? 0, 0.001) }
+    private var dayIndices: [Int] { Array(hours.indices) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -152,8 +169,12 @@ struct DayChart: View {
             }
 
             GeometryReader { geo in
-                HStack(alignment: .bottom, spacing: 2) {
-                    ForEach(hours.indices, id: \.self) { i in
+                let spacing: CGFloat = 2
+                let barWidth = hours.isEmpty ? 0 :
+                    (geo.size.width - spacing * CGFloat(hours.count - 1)) / CGFloat(hours.count)
+
+                HStack(alignment: .bottom, spacing: spacing) {
+                    ForEach(dayIndices, id: \.self) { (i: Int) in
                         let value = hours[i]
                         let isToday = todayIndex == i
                         let ratio = value / peak
@@ -172,12 +193,18 @@ struct DayChart: View {
                                 .fill((isToday ? Palette.accent : Palette.mark).opacity(depth))
                                 .frame(height: barHeight)
                                 .brightness(hoverIndex == i ? 0.06 : 0)
+                                .anchorPreference(key: DayChartHoverPreferenceKey.self, value: .bounds) { anchor in
+                                    guard hoverIndex == i else { return nil }
+                                    return DayChartHover(
+                                        anchor: anchor,
+                                        date: dateText(day: i + 1),
+                                        duration: DurationFormatter.string(Int((value * 3600).rounded())))
+                                }
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .frame(width: barWidth, height: geo.size.height, alignment: .bottom)
                         .contentShape(Rectangle())
                         .onHover { hoverIndex = $0 ? i : (hoverIndex == i ? nil : hoverIndex) }
                         .onTapGesture { onSelectDay(i + 1) }
-                        .help(tooltip(day: i + 1, value: value))
                     }
                 }
             }
@@ -197,13 +224,15 @@ struct DayChart: View {
         .padding(.top, 9)
         .padding(.bottom, 7)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Palette.surface2)
+        .background(Palette.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    private func tooltip(day: Int, value: Double) -> String {
-        value > 0 ? String(format: "Day %d - %.2fh", day, value) : "Day \(day) - none"
+    private func dateText(day: Int) -> String {
+        let date = calendar.date(byAdding: .day, value: day - 1, to: monthStart) ?? monthStart
+        let weekday = calendar.shortWeekdaySymbols[calendar.component(.weekday, from: date) - 1]
+        let month = calendar.shortMonthSymbols[calendar.component(.month, from: date) - 1]
+        return String(format: "%@ %02d %@", weekday, calendar.component(.day, from: date), month)
     }
 }
 
@@ -315,6 +344,35 @@ struct SpanInfoCard: View {
                 .font(Typo.mono(12.5, .medium))
                 .foregroundStyle(tint)
         }
+    }
+}
+
+struct DayInfoCard: View {
+    let date: String
+    let duration: String
+
+    var body: some View {
+        VStack(alignment: .center, spacing: 3) {
+            Text(date)
+                .font(Typo.sans(12.5, .semibold))
+                .foregroundStyle(Palette.ink)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.bottom, 1)
+            Text(duration)
+                .font(Typo.mono(12.5, .medium))
+                .foregroundStyle(Palette.ink)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(width: 112)
+        .background(Palette.surface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Palette.rule, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .shadow(color: Color(hex: 0x1E2826).opacity(0.18), radius: 12, y: 4)
     }
 }
 

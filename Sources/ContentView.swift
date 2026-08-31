@@ -311,6 +311,8 @@ struct ContentView: View {
                 DayChart(
                     hours: state.hoursPerDay,
                     todayIndex: todayIndex,
+                    monthStart: state.monthInterval?.start ?? Date(),
+                    calendar: state.calculationCalendar,
                     onSelectDay: { day in state.scrollToDay(day) }
                 )
             }
@@ -321,6 +323,21 @@ struct ContentView: View {
         .frame(height: 192)
         .background(Palette.surface)
         .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+        .overlayPreferenceValue(DayChartHoverPreferenceKey.self) { hover in
+            GeometryReader { proxy in
+                if let hover {
+                    let rect = proxy[hover.anchor]
+                    let halfWidth: CGFloat = 56
+                    DayInfoCard(date: hover.date, duration: hover.duration)
+                        .position(
+                            x: min(max(rect.midX, halfWidth), proxy.size.width - halfWidth),
+                            y: max(24, rect.minY - 30)
+                        )
+                        .allowsHitTesting(false)
+                }
+            }
+            .zIndex(100)
+        }
     }
 
     private var todayIndex: Int? {
@@ -951,7 +968,7 @@ struct EventRow: View {
     /// Distance from the row's trailing edge to the duration column, so the card
     /// lands just left of the numbers.
     private var cardTrailingInset: CGFloat {
-        Col.inset + Col.duration
+        Col.inset + Col.duration - 40
             + (state.isFeedbackColumnVisible ? Col.feedback + Col.gap : 0)
     }
 
