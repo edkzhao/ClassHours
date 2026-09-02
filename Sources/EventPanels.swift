@@ -1085,7 +1085,9 @@ struct EventDetailPanel: View {
         } ?? 0
         for match in matches {
             if deleting {
-                series.ungroup(match.seriesKey)
+                // Removing one occurrence must not remove its recurrence's
+                // membership from the logical ClassHours series. EventKit
+                // keeps the remaining occurrences under the same key.
                 try writer.delete(match, scope: .thisOccurrence)
                 continue
             }

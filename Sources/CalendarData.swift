@@ -95,8 +95,9 @@ extension AppState {
         occurrences(on: day).reduce(0) { $0 + max(0, $1.endMinutes - $1.startMinutes) }
     }
 
-    /// Events grouped the way Tidy Up groups them: same calendar, same
-    /// normalised title. Returns the series keys per group.
+    /// Recurrences that have exactly the same visible event title. This is a
+    /// recovery path for ClassHours' local membership only; notes remain on
+    /// their individual EventKit events and are never compared or rewritten.
     ///
     /// Membership lives only in ClassHours, so it can always be rebuilt from
     /// the calendar — which is what makes losing it recoverable.
@@ -110,8 +111,7 @@ extension AppState {
         var buckets: [String: Set<String>] = [:]
         for ev in store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: cals)) {
             guard let title = ev.title, !title.isEmpty, !ev.isAllDay else { continue }
-            let key = (ev.calendar?.calendarIdentifier ?? "") + "\u{1}" + TidyUp.normalize(title)
-            buckets[key, default: []].insert(ev.seriesKey)
+            buckets[title, default: []].insert(ev.seriesKey)
         }
         return buckets.values.filter { $0.count > 1 }.map { Array($0).sorted() }
     }

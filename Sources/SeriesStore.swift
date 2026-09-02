@@ -14,10 +14,14 @@ final class SeriesStore: ObservableObject {
     @Published private(set) var groups: [String: [String]] = [:]
     private var indexByEvent: [String: String] = [:]
 
-    private let defaults = UserDefaults.standard
-    private let key = "seriesMembership.v1"
+    private let defaults: UserDefaults
+    private let key: String
 
-    init() { load() }
+    init(defaults: UserDefaults = .standard, key: String = "seriesMembership.v1") {
+        self.defaults = defaults
+        self.key = key
+        load()
+    }
 
     private func load() {
         if let data = defaults.data(forKey: key),
@@ -95,6 +99,25 @@ final class SeriesStore: ObservableObject {
             formed += 1
         }
         return formed
+    }
+
+    /// Restores only title-derived links that are currently missing. Existing
+    /// logical series are left intact, including members with different notes.
+    @discardableResult
+    func repair(from candidates: [[String]]) -> Int {
+        var repaired = 0
+        for ids in candidates {
+            let candidate = Set(ids)
+            guard candidate.count > 1 else { continue }
+            let alreadyLinked = candidate.contains { id in
+                candidate.isSubset(of: Set(siblings(of: id)))
+            }
+            guard !alreadyLinked else { continue }
+            let existing = candidate.compactMap { indexByEvent[$0] }.first
+            _ = group(Array(candidate), into: existing)
+            repaired += 1
+        }
+        return repaired
     }
 
     func prune(existing: Set<String>) {

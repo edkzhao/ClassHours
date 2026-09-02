@@ -54,10 +54,10 @@ struct ClassHoursApp: App {
         }
     }
 
-    /// Re-forms series membership by grouping events that share a calendar and
-    /// a title — the same rule Tidy Up uses, without its renames or notes work.
+    /// Repairs any local membership links that are missing from otherwise
+    /// identical event titles. Existing links and EventKit notes are untouched.
     private func rebuildSeries() {
-        let formed = series.rebuild(from: state.seriesGroupsFromTitles())
+        let formed = series.repair(from: state.seriesGroupsFromTitles())
         if formed > 0 { state.refreshRemainingCounts() }
     }
 
@@ -77,7 +77,7 @@ struct ClassHoursApp: App {
                     // for the calendars, which arrive after authorisation.
                     state.onCalendarsLoaded = {
                         if prefs.isEmpty { rebuildRosters() }
-                        if series.isEmpty { rebuildSeries() }
+                        rebuildSeries()
                     }
                 }
                 // The design is a single committed light interface.

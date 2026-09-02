@@ -338,6 +338,20 @@ check("both detaches agree",
 check("an untouched key is unchanged", SeriesKey.normalize(masterUID), masterUID)
 check("empty stays empty", SeriesKey.normalize(""), "")
 
+print("\nMissing logical-series membership can be repaired")
+MainActor.assumeIsolated {
+    let repairSuite = "ClassHours.logic-tests.series-repair"
+    let repairDefaults = UserDefaults(suiteName: repairSuite)!
+    repairDefaults.removePersistentDomain(forName: repairSuite)
+    let repairStore = SeriesStore(defaults: repairDefaults, key: "membership")
+    _ = repairStore.group(["wed-master", "sun-master"])
+    repairStore.ungroup("wed-master") // mirrors the former single-occurrence delete bug
+    check("the broken link leaves Wednesday alone", "\(repairStore.siblings(of: "wed-master").count)", "1")
+    check("repair restores the exact-title pair", "\(repairStore.repair(from: [["wed-master", "sun-master"]]))", "1")
+    check("both recurrences are linked again", "\(repairStore.siblings(of: "wed-master").count)", "2")
+    repairDefaults.removePersistentDomain(forName: repairSuite)
+}
+
 // MARK: - The calendar's opening band
 
 print("\nTime Range accepts a forward span inside one day")
