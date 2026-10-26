@@ -142,6 +142,26 @@ they flip together rather than one going stale at the month boundary.
   so nothing is tinted over. Today's own jump doesn't pulse: it happens on every
   launch, and a flash there would just be noise.
 
+## Global search
+
+The Calendar toolbar's **Search** button opens a right-hand panel. Search covers
+all calendars, including hidden ones, and matches event names, notes, roles,
+calendar names and locations. Every matching occurrence appears once. Results are chronological,
+with a single Today divider and no result-count limit. Clicking a result
+reveals its calendar and jumps to the event's date and time. Click outside the
+panel or press Escape to close it. The destination outline matches its calendar;
+clicking blank calendar space clears it without moving the calendar.
+
+The search scans EventKit's date range in short windows to avoid its four-year
+query limit, then displays the first and last event dates found.
+The catalog is loaded off the main thread and refreshed when calendar data
+changes.
+
+New-event suggestions also include other calendars, label their source, and
+put the current calendar first. Choosing a suggestion switches to its calendar
+and retains its series. Read-only calendar suggestions cannot be used to create
+events.
+
 ## Editing branches
 
 A ClassHours series can contain several schedules. The Event editor has an

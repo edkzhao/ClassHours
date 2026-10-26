@@ -97,7 +97,9 @@ struct CalendarPage: View {
             Divider().overlay(Palette.rule)
             Group {
                 if mode == .week {
-                    WeekGrid(windowStart: windowStart, pan: pan, onPick: { open(.detail($0)) })
+                    WeekGrid(windowStart: windowStart, pan: pan,
+                             focusDate: state.calendarSearchDestination?.item.start,
+                             onPick: { open(.detail($0)) })
                 } else {
                     MonthGrid(anchor: anchor, onPick: { open(.detail($0)) })
                 }
@@ -107,6 +109,8 @@ struct CalendarPage: View {
             }
         }
         .background(Palette.canvas)
+        .contentShape(Rectangle())
+        .onTapGesture { state.clearSearchHighlight() }
         // Clicking anywhere off the panel dismisses it.
         .overlay {
             if panel != nil {
@@ -122,7 +126,9 @@ struct CalendarPage: View {
             swipe.onDelta = { [weak pan] d in pan?.drag(by: d) }
             swipe.onSettle = { [weak pan] in pan?.settle() }
             swipe.install()
+            followSearchDestination()
         }
+        .onChange(of: state.calendarSearchDestination) { _, _ in followSearchDestination() }
     }
 
     // MARK: Top bar
@@ -130,7 +136,18 @@ struct CalendarPage: View {
     /// Same leading cluster, same spacing and padding as the hours page, so the
     /// chrome doesn't shift when you move between them.
     private var topBar: some View {
-        HStack(spacing: 14) {
+        ViewThatFits(in: .horizontal) {
+            toolbar(compact: false)
+            toolbar(compact: true)
+        }
+        .padding(.horizontal, TopBarInset.horizontal)
+        .padding(.top, TopBarInset.top)
+        .padding(.bottom, TopBarInset.bottom)
+        .background(Palette.surface)
+    }
+
+    private func toolbar(compact: Bool) -> some View {
+        HStack(spacing: compact ? 8 : 14) {
             SidebarToggle()
 
             HStack(spacing: 4) {
@@ -139,12 +156,12 @@ struct CalendarPage: View {
                 Button { monthPickerShown.toggle() } label: {
                     HStack(spacing: 8) {
                         HStack(alignment: .firstTextBaseline, spacing: 7) {
-                            Text(rangeTitle)
-                                .font(Typo.sans(19, .semibold))
+                            Text(compact ? String(rangeTitle.prefix(3)) : rangeTitle)
+                                .font(Typo.sans(compact ? 15 : 19, .semibold))
                                 .foregroundStyle(Palette.ink)
                                 .kerning(-0.3)
                             Text(String(cal.component(.year, from: windowStart)))
-                                .font(Typo.mono(19, .light))
+                                .font(Typo.mono(compact ? 15 : 19, .light))
                                 .foregroundStyle(Palette.ink2)
                         }
                         Image(systemName: "chevron.up.chevron.down")
@@ -160,23 +177,36 @@ struct CalendarPage: View {
 
                 NavIconButton(systemImage: "chevron.right", help: "Next") { step(1) }
 
-                PillButton(title: "Today", systemImage: nil) { goToday() }
+                PillButton(title: compact ? nil : "Today", systemImage: compact ? "calendar" : nil) { goToday() }
+                .help("Today")
+                .accessibilityLabel("Today")
                 .padding(.leading, 8)
             }
 
-            SegmentedChoice(options: [(Mode.week, "Week"), (Mode.month, "Month")],
-                            selection: $mode)
+            if compact {
+                Menu {
+                    Button("Week") { mode = .week }
+                    Button("Month") { mode = .month }
+                } label: { Text(mode == .week ? "Week" : "Month").font(Typo.sans(12, .medium)) }
+                .fixedSize()
+            } else {
+                SegmentedChoice(options: [(Mode.week, "Week"), (Mode.month, "Month")], selection: $mode)
+            }
 
             Spacer(minLength: 8)
 
             DayRing()
 
-            PillButton(title: "New Event", systemImage: "plus") { open(.compose) }
+            PillButton(title: compact ? nil : "New Event", systemImage: "plus") { open(.compose) }
+                .help("New Event")
+                .accessibilityLabel("New Event")
+            PillButton(title: compact ? nil : "Search", systemImage: "magnifyingglass") {
+                closePanel()
+                state.globalSearchShown = true
+            }
+            .help("Search")
+            .accessibilityLabel("Search")
         }
-        .padding(.horizontal, TopBarInset.horizontal)
-        .padding(.top, TopBarInset.top)
-        .padding(.bottom, TopBarInset.bottom)
-        .background(Palette.surface)
     }
 
     private var rangeTitle: String {
@@ -267,6 +297,15 @@ struct CalendarPage: View {
             if mode == .week { pan.dayShift += n * 7 }
             else { anchor = cal.date(byAdding: .month, value: n, to: anchor) ?? anchor }
         }
+    }
+
+    private func followSearchDestination() {
+        guard let destination = state.calendarSearchDestination else { return }
+        panel = nil
+        anchor = destination.item.start
+        mode = .week
+        pan.dayShift = 0
+        pan.dragX = 0
     }
 
     // MARK: Panel
@@ -428,6 +467,7 @@ struct WeekGrid: View {
     @EnvironmentObject private var prefs: PrefsStore
     let windowStart: Date
     @ObservedObject var pan: PanState
+    var focusDate: Date? = nil
     let onPick: (String) -> Void
     @EnvironmentObject private var holidays: HolidayStore
     @State private var pickedHoliday: PickedHoliday?
@@ -468,7 +508,8 @@ struct WeekGrid: View {
                         grid(colW: colW, shift: shift, hourHeight: hourHeight)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onAppear { openOnBand(proxy) }
+                    .onAppear { scrollToFocus(proxy) }
+                    .onChange(of: state.calendarSearchDestination?.id) { _, _ in scrollToFocus(proxy) }
                     // A changed range should show immediately, not next launch.
                     .onChange(of: state.dayStartMinutes) { _, _ in openOnBand(proxy) }
                     .onChange(of: state.dayEndMinutes) { _, _ in openOnBand(proxy) }
@@ -542,6 +583,13 @@ struct WeekGrid: View {
     private func openOnBand(_ proxy: ScrollViewProxy) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(Self.bandAnchor, anchor: .top) }
+        }
+    }
+
+    private func scrollToFocus(_ proxy: ScrollViewProxy) {
+        guard focusDate != nil else { openOnBand(proxy); return }
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("search-time", anchor: .center) }
         }
     }
 
@@ -623,11 +671,17 @@ struct WeekGrid: View {
         // The band marker has to live in the scroll view's own content — an id
         // inside an overlay is not something ScrollViewProxy will scroll to,
         // which is why a range starting at 07:30 opened at 00:00 instead.
-        let startOffset = CGFloat(state.dayStartMinutes) / 60 * hourHeight
+        let focusMinutes = focusDate.map { TimeText.minutes(of: $0, cal) } ?? state.dayStartMinutes
+        let markers = [(Self.bandAnchor, state.dayStartMinutes), ("search-time", focusMinutes)]
+            .sorted { $0.1 < $1.1 }
         return VStack(spacing: 0) {
-            Color.clear.frame(height: startOffset)
-            Color.clear.frame(width: 1, height: 1).id(Self.bandAnchor)
-            Color.clear.frame(height: max(0, hourHeight * 24 - startOffset - 1))
+            ForEach(markers.indices, id: \.self) { index in
+                let previous = index == 0 ? 0 : CGFloat(markers[index - 1].1) / 60 * hourHeight + 1
+                let offset = CGFloat(markers[index].1) / 60 * hourHeight
+                Color.clear.frame(height: max(0, offset - previous))
+                Color.clear.frame(width: 1, height: 1).id(markers[index].0)
+            }
+            Color.clear.frame(height: max(0, hourHeight * 24 - CGFloat(markers.last!.1) / 60 * hourHeight - 1))
         }
             .frame(maxWidth: .infinity)
             .overlay(alignment: .topLeading) {
@@ -683,6 +737,14 @@ private struct DayColumn: View {
                     let h = max(CGFloat(placed.item.endMinutes - placed.item.startMinutes) / 60 * hourHeight, 18)
                     let w = geo.size.width / CGFloat(placed.lanes)
                     EventBlock(item: placed.item, showRemaining: state.showRemaining, height: h)
+                        .overlay {
+                            if placed.item.key == state.highlightedSearchOccurrenceKey {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .strokeBorder(prefs.color(placed.item.calendarID,
+                                                             fallbackIndex: placed.item.colorIndex), lineWidth: 2)
+                                    .allowsHitTesting(false)
+                            }
+                        }
                         .frame(width: max(w - 5, 20), height: h)
                         .offset(x: CGFloat(placed.lane) * w + 3, y: top)
                         .onTapGesture { onPick(placed.item.key) }

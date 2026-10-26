@@ -378,7 +378,8 @@ enum DurationFormatter {
 
 /// A class taught before, offered back while typing a new event's name.
 struct ClassSuggestion: Identifiable, Hashable {
-    var id: String { title }
+    var id: String { calendarID + "|" + title }
+    let calendarID: String
     let seriesKey: String
     let title: String
     let weekday: Int
@@ -387,6 +388,20 @@ struct ClassSuggestion: Identifiable, Hashable {
     let notes: SeriesNotes
     let lastSeen: Date
     let count: Int
+
+    static func matching(_ query: String, calendarID: String, history: [ClassSuggestion]) -> [ClassSuggestion] {
+        history.compactMap { item -> (ClassSuggestion, Int)? in
+            guard item.title != query || item.calendarID != calendarID,
+                  let score = TitleSearch.score(query, title: item.title) else { return nil }
+            return (item, score)
+        }.sorted { a, b in
+            let aLocal = a.0.calendarID == calendarID, bLocal = b.0.calendarID == calendarID
+            if aLocal != bLocal { return aLocal }
+            if a.1 != b.1 { return a.1 < b.1 }
+            if a.0.lastSeen != b.0.lastSeen { return a.0.lastSeen > b.0.lastSeen }
+            return a.0.id.localizedStandardCompare(b.0.id) == .orderedAscending
+        }.map(\.0)
+    }
 }
 
 /// The band the calendar opens on.

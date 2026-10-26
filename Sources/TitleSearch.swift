@@ -15,21 +15,23 @@ enum TitleSearch {
     /// romanised one — otherwise typing "shi" surfaces every 思 in the list
     /// ahead of the class actually called "Shi".
     static func score(_ query: String, title: String) -> Int? {
-        let q = fold(query)
+        let q = fold(query.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !q.isEmpty else { return nil }
 
         let plain = fold(title)
-        if plain.hasPrefix(q) { return 0 }
-        if plain.contains(q) { return 1 }
+        if plain == q { return 0 }
+        if plain.hasPrefix(q) { return 1 }
+        if plain.contains(q) { return 2 }
 
         let roman = romanised(title)
-        if roman.hasPrefix(q) { return 2 }
-        if roman.contains(q) { return 3 }
+        if roman.hasPrefix(q) { return 3 }
+        if roman.contains(q) { return 4 }
         // Romanisation comes back one syllable at a time — "kao er si" — but
         // nobody types the spaces, so run the query against the joined-up form
         // as well.
-        if compacted(roman).contains(compacted(q)) { return 4 }
-        if syllableInitials(roman).contains(q) { return 5 }
+        let compactQuery = compacted(q)
+        if !compactQuery.isEmpty, compacted(roman).contains(compactQuery) { return 5 }
+        if syllableInitials(roman).contains(q) { return 6 }
         return nil
     }
 

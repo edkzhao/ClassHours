@@ -671,6 +671,67 @@ do {
 }
 
 
+print("\nGlobal calendar search")
+do {
+    func item(_ id: String, title: String, notes: String = "", calendar: String = "School",
+              start: Date = date(2026, 8, 3, 9, 0)) -> EventSearchItem {
+        EventSearchItem(id: id, eventID: id, calendarID: calendar, calendarTitle: calendar,
+                        title: title, notes: notes, location: "", start: start,
+                        end: start.addingTimeInterval(3600), allDay: false)
+    }
+    let alpha = item("a", title: "Alpha-Calculus", notes: "Calculus notes\nManager: Calculus")
+    let beta = item("b", title: "Beta-Calculus", calendar: "Other")
+    let note = item("n", title: "Notes only", notes: "Review calculus")
+    let role = item("r", title: "Roles only", notes: "Instructor: Calculus")
+    let exact = item("e", title: "Calculus")
+    check("selecting the same event creates a fresh navigation request",
+          "\(CalendarSearchDestination(item: exact) != CalendarSearchDestination(item: exact))", "true")
+    let hits = EventSearch.rank("calculus", items: [role, beta, alpha, alpha, note, exact])
+    check("title, notes and role hits across calendars", "\(hits.count)", "5")
+    check("one occurrence matching several fields appears once", "\(hits.filter { $0.id == "a" }.count)", "1")
+    check("same-time hits use alphabetical ties", hits.map(\.id).joined(separator: ","), "a,b,e,n,r")
+    let timeline = EventSearch.rank("calculus", items: [
+        item("future", title: "Calculus", start: date(2026, 8, 4, 9, 0)),
+        item("past", title: "Z-Calculus", start: date(2026, 8, 2, 9, 0)),
+        item("today", title: "Today-Calculus", start: date(2026, 8, 3, 0, 0))])
+    check("all results sort by time rather than match strength", timeline.map(\.id).joined(separator: ","), "past,today,future")
+    check("Today divider sits before the first event starting today",
+          "\(EventSearch.todayIndex(in: timeline, now: date(2026, 8, 3, 15, 0), calendar: cal))", "1")
+    check("all-past results put Today at the end",
+          "\(EventSearch.todayIndex(in: timeline, now: date(2026, 9, 1, 0, 0), calendar: cal))", "3")
+    check("all-future results put Today first",
+          "\(EventSearch.todayIndex(in: timeline, now: date(2026, 7, 1, 0, 0), calendar: cal))", "0")
+    check("empty global query has no results", "\(EventSearch.rank("  ", items: [alpha]).count)", "0")
+    check("punctuation does not turn into a match-all", "\(EventSearch.rank("???", items: [alpha]).count)", "0")
+    check("multiple words can match title and role together",
+          "\(EventSearch.rank("alpha Caroline", items: [item("x", title: "Alpha-Calculus", notes: "Manager: Caroline")]).count)", "1")
+    check("all query words must match",
+          "\(EventSearch.rank("calculus missing", items: [alpha]).count)", "0")
+    check("pinyin still matches event names", "\(EventSearch.rank("xuruiyang", items: [item("cn", title: "徐瑞阳")]).count)", "1")
+    let recurrences = (0..<300).map { item("repeat-\($0)", title: "Calculus", start: date(2026, 1, 1, 9, 0).addingTimeInterval(Double($0) * 86400)) }
+    check("no result count cap and recurrences remain distinct", "\(EventSearch.rank("calculus", items: recurrences).count)", "300")
+    let from = date(1990, 1, 1, 0, 0), to = date(2045, 6, 1, 0, 0)
+    let windows = EventSearch.windows(from: from, to: to, calendar: cal)
+    check("scan reaches the first and last requested dates", "\(windows.first?.start == from && windows.last?.end == to)", "true")
+    check("scan windows are contiguous without gaps", "\(zip(windows, windows.dropFirst()).allSatisfy { $0.end == $1.start })", "true")
+    check("each scan window stays below EventKit's four-year limit",
+          "\(windows.allSatisfy { $0.duration < 4 * 366 * 86400 })", "true")
+    let spansBoundary = item("boundary", title: "Calculus", start: date(2026, 12, 31, 23, 30))
+    check("same event returned in adjacent query windows is deduplicated", "\(EventSearch.rank("calculus", items: [spansBoundary, spansBoundary]).count)", "1")
+
+    func suggestion(_ calendarID: String, _ title: String) -> ClassSuggestion {
+        ClassSuggestion(calendarID: calendarID, seriesKey: calendarID, title: title, weekday: 2,
+                        startMinutes: 540, endMinutes: 600, notes: SeriesNotes(), lastSeen: from, count: 1)
+    }
+    let local = suggestion("current", "Z-Calculus"), foreign = suggestion("other", "Calculus")
+    let suggestions = ClassSuggestion.matching("calculus", calendarID: "current", history: [foreign, local])
+    check("current calendar suggestions outrank stronger foreign matches", suggestions.map(\.calendarID).joined(separator: ","), "current,other")
+    check("identical titles in two calendars retain separate identities",
+          "\(suggestion("current", "Calculus").id != suggestion("other", "Calculus").id)", "true")
+    check("an exact title in another calendar is still suggested",
+          "\(ClassSuggestion.matching("Calculus", calendarID: "current", history: [foreign]).count)", "1")
+}
+
 print("")
 if failures == 0 {
     print("All checks passed.")

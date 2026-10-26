@@ -154,7 +154,8 @@ extension AppState {
             // The most recent booking wins: times and roles drift over a term,
             // and the latest is what you are most likely repeating.
             if let existing, existing.lastSeen >= s {
-                best[key] = ClassSuggestion(seriesKey: existing.seriesKey, title: existing.title,
+                best[key] = ClassSuggestion(calendarID: calendarID,
+                                            seriesKey: existing.seriesKey, title: existing.title,
                                             weekday: existing.weekday,
                                             startMinutes: existing.startMinutes,
                                             endMinutes: existing.endMinutes,
@@ -162,6 +163,7 @@ extension AppState {
                                             count: existing.count + 1)
             } else {
                 best[key] = ClassSuggestion(
+                    calendarID: calendarID,
                     seriesKey: ev.seriesKey,
                     title: title,
                     weekday: calculationCalendar.component(.weekday, from: s),

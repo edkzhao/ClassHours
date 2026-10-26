@@ -92,6 +92,22 @@ struct ContentView: View {
         }
         .background(Palette.surface)
         .overlay {
+            if state.globalSearchShown {
+                Color.black.opacity(0.06)
+                    .contentShape(Rectangle())
+                    .onTapGesture { withAnimation(.easeOut(duration: 0.2)) { state.globalSearchShown = false } }
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if state.globalSearchShown {
+                GlobalSearchPanel()
+                    .frame(width: 460)
+                    .overlay(alignment: .leading) { Rectangle().fill(Palette.rule).frame(width: 1) }
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.22), value: state.globalSearchShown)
+        .overlay {
             if state.settingsShown {
                 ZStack {
                     // So Settings stays visually in front, gently soften the

@@ -24,6 +24,12 @@ final class AppState: ObservableObject {
     @Published private var countShortByCalendar: [String: Bool] = [:]
 
     @Published var query: String = ""
+    @Published var globalSearchShown = false
+    @Published private(set) var calendarSearchDestination: CalendarSearchDestination?
+    @Published private(set) var highlightedSearchOccurrenceKey: String?
+    @Published private(set) var searchRevision = 0
+    private var searchCatalogTask: Task<[EventSearchItem], Never>?
+    private var calendarChanges: AnyCancellable?
 
     /// The user's own preference. A narrow window overrides it temporarily
     /// without overwriting it, so widening again restores what they chose.
@@ -107,15 +113,41 @@ final class AppState: ObservableObject {
     private var historyCache: [String: [ClassSuggestion]] = [:]
 
     func suggestions(for calendarID: String) -> [ClassSuggestion] {
-        if let hit = historyCache[calendarID] { return hit }
-        let found = classHistory(calendarID: calendarID)
-        historyCache[calendarID] = found
-        return found
+        calendars.flatMap { choice -> [ClassSuggestion] in
+            if let hit = historyCache[choice.id] { return hit }
+            let found = classHistory(calendarID: choice.id)
+            historyCache[choice.id] = found
+            return found
+        }
+    }
+
+    func searchCatalog() async -> [EventSearchItem] {
+        guard hasReadAccess else { return [] }
+        if let task = searchCatalogTask { return await task.value }
+        let task = Task.detached(priority: .userInitiated) { EventSearchCatalog.read() }
+        searchCatalogTask = task
+        return await task.value
+    }
+
+    func revealSearchResult(_ item: EventSearchItem) {
+        globalSearchShown = false
+        if !isVisible(item.calendarID) { setVisible(true, item.calendarID) }
+        selectedCalendarID = item.calendarID
+        calendarSearchDestination = CalendarSearchDestination(item: item)
+        highlightedSearchOccurrenceKey = item.occurrenceKey
+        page = .calendar
+    }
+
+    func clearSearchHighlight() {
+        highlightedSearchOccurrenceKey = nil
     }
 
     func invalidateDayCache() {
         dayCache.removeAll()
         historyCache.removeAll()
+        searchCatalogTask?.cancel()
+        searchCatalogTask = nil
+        searchRevision += 1
     }
     /// A lightweight in-session undo record for edits that sweep a logical
     /// ClassHours series.
@@ -408,6 +440,9 @@ final class AppState: ObservableObject {
         // default one, though — today's month, and the calendar's own band.
         page = defaults.string(forKey: Keys.lastPage) == "calendar" ? .calendar : .hours
         authorizationStatus = EKEventStore.authorizationStatus(for: .event)
+        calendarChanges = NotificationCenter.default.publisher(for: .EKEventStoreChanged, object: store)
+            .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.invalidateDayCache() }
 
         clockTimer = Timer.publish(every: 60, on: .main, in: .common)
             .autoconnect()

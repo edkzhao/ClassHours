@@ -1468,6 +1468,12 @@ struct ComposerPanel: View {
         .onChange(of: draft.start) { _, start in
             if until < start { until = start }
         }
+        .onChange(of: draft.calendarID) { _, calendarID in
+            if let adopted, adopted.calendarID != calendarID {
+                self.adopted = nil
+                draft.joinSeriesKey = nil
+            }
+        }
         .onChange(of: conflictFingerprint) { _, _ in refreshConflictPreview() }
         .onAppear {
             guard draft.calendarID.isEmpty else { return }
@@ -1514,29 +1520,25 @@ struct ComposerPanel: View {
         }
     }
 
-    /// Past classes on the chosen calendar matching what has been typed.
+    /// Prefer the chosen calendar without hiding matches from other calendars.
     private var suggestions: [ClassSuggestion] {
         let query = draft.title.trimmingCharacters(in: .whitespaces)
         guard !suggestionsDismissed, query.count >= 1, !draft.calendarID.isEmpty else { return [] }
-        return state.suggestions(for: draft.calendarID)
-            .compactMap { s -> (ClassSuggestion, Int)? in
-                guard s.title != draft.title,
-                      let rank = TitleSearch.score(query, title: s.title) else { return nil }
-                return (s, rank)
-            }
-            .sorted { a, b in
-                a.1 == b.1 ? a.0.lastSeen > b.0.lastSeen : a.1 < b.1
-            }
-            .prefix(3)
-            .map(\.0)
+        return ClassSuggestion.matching(query, calendarID: draft.calendarID,
+                                        history: state.suggestions(for: draft.calendarID))
     }
 
     private var suggestionList: some View {
-        VStack(spacing: 0) {
+        ScrollView {
+          LazyVStack(spacing: 0) {
             ForEach(suggestions) { hit in
                 Button { adopt(hit) } label: {
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 2) {
+                            Text(state.calendarTitle(hit.calendarID)
+                                 + (state.writableCalendars.contains { $0.id == hit.calendarID } ? "" : " · Read only"))
+                                .font(Typo.sans(10.5, .semibold))
+                                .foregroundStyle(Palette.ink2)
                             Text(hit.title)
                                 .font(Typo.sans(12.5, .medium))
                                 .foregroundStyle(Palette.ink)
@@ -1562,8 +1564,11 @@ struct ComposerPanel: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(HoverRowStyle())
+                .disabled(!state.writableCalendars.contains { $0.id == hit.calendarID })
             }
+          }
         }
+        .frame(height: CGFloat(min(suggestions.count, 3)) * 63)
         .background(Palette.surface)
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Palette.rule, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 9))
@@ -1578,6 +1583,7 @@ struct ComposerPanel: View {
     /// Re-book a class already in the calendar: the whole form is filled from
     /// the last time it ran, and whatever gets created joins that same series.
     private func adopt(_ hit: ClassSuggestion) {
+        draft.calendarID = hit.calendarID
         draft.title = hit.title
         draft.notes = hit.notes
         draft.joinSeriesKey = hit.seriesKey
@@ -2192,7 +2198,7 @@ private struct DateField: View {
 }
 
 /// A list row that lights up under the pointer.
-private struct HoverRowStyle: ButtonStyle {
+struct HoverRowStyle: ButtonStyle {
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
