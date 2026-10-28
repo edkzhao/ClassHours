@@ -175,6 +175,37 @@ struct PlannedRepeatOccurrence: Hashable {
 }
 
 enum RepeatPlanner {
+    /// Append only beyond each live branch's existing boundary. Stored masters
+    /// supply old schedule boundaries, never the content of a new occurrence.
+    static func extensionOccurrences(live: [PlannedRepeatOccurrence],
+                                     baseline: [PlannedRepeatOccurrence], end: SeriesEnd,
+                                     now: Date, calendar: Calendar) -> [PlannedRepeatOccurrence] {
+        let branches = Dictionary(grouping: live, by: {
+            BranchSignature(start: $0.start, end: $0.end, calendar: calendar)
+        })
+        let patterns = branches.compactMap { signature, members -> WeeklyRepeatPattern? in
+            guard let signature, let first = members.min(by: { $0.start < $1.start }) else { return nil }
+            let boundary = (baseline + members).filter {
+                signature.matches(start: $0.start, end: $0.end, calendar: calendar)
+            }.map(\.start).max() ?? first.start
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: boundary)) else { return nil }
+            return WeeklyRepeatPattern(id: "\(signature.weekday)|\(signature.startMinutes)|\(signature.durationMinutes)",
+                                       firstStart: max(nextDay, calendar.startOfDay(for: now)),
+                                       weekdays: [signature.weekday], startMinutes: signature.startMinutes,
+                                       durationMinutes: signature.durationMinutes)
+        }
+        switch end {
+        case .until:
+            return occurrences(patterns: patterns, end: end, calendar: calendar).filter { $0.start >= now }
+        case .count(let total):
+            let needed = max(0, total - live.count)
+            guard needed > 0, needed <= 400 else { return [] }
+            return Array(occurrences(patterns: patterns, end: .count(needed + patterns.count),
+                                     calendar: calendar, limit: needed + patterns.count)
+                .filter { $0.start >= now }.prefix(needed))
+        }
+    }
+
     /// Expands the same weekly model used by New Event. A count is global
     /// across all supplied patterns, while an end date is inclusive.
     static func occurrences(patterns: [WeeklyRepeatPattern], end: SeriesEnd,

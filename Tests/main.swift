@@ -1,4 +1,5 @@
 import Foundation
+import EventKit
 
 // Standalone checks for the two rules that are easy to get wrong and hard to
 // observe from the UI: month-boundary clipping, and what counts as "short".
@@ -730,6 +731,92 @@ do {
           "\(suggestion("current", "Calculus").id != suggestion("other", "Calculus").id)", "true")
     check("an exact title in another calendar is still suggested",
           "\(ClassSuggestion.matching("Calculus", calendarID: "current", history: [foreign]).count)", "1")
+}
+
+print("\nRecurrence extensions inherit live branch content, never a stale master")
+do {
+    let store = EKEventStore()
+    func event(_ title: String, _ start: Date, minutes: Int = 120, notes: String? = nil) -> EKEvent {
+        let value = EKEvent(eventStore: store)
+        value.title = title
+        value.startDate = start
+        value.endDate = start.addingTimeInterval(Double(minutes * 60))
+        value.notes = notes
+        return value
+    }
+    let master = event("Calculus", date(2026, 8, 31, 10, 0), notes: "old notes")
+    let monday = event("Calculus II", date(2026, 11, 23, 9, 30), notes: "Coordinator: New\n---\nCurrent notes")
+    monday.location = "Room 2"
+    monday.url = URL(string: "https://example.com/current")!
+    let older = event("Calculus I", date(2026, 11, 16, 9, 30), notes: "Keep this exception")
+    let tuesday = event("Tuesday title", date(2026, 11, 24, 9, 30), notes: "Tuesday notes")
+    let future = event("Future exception", date(2026, 12, 14, 9, 30))
+    let templates = [master, monday, older, tuesday, future].map(RecurrenceTemplate.init)
+    let start = date(2026, 11, 30, 9, 30), end = date(2026, 11, 30, 11, 30)
+    let content = RecurrenceTemplate.latest(for: start, end: end, in: templates, calendar: cal)
+    check("moved branch inherits renamed live title", content?.title ?? "nil", "Calculus II")
+    check("latest same-branch notes include current roles", content?.notes ?? "nil", monday.notes!)
+    check("template order does not affect inheritance",
+          RecurrenceTemplate.latest(for: start, end: end, in: templates.reversed(), calendar: cal)?.title ?? "nil", "Calculus II")
+    let second = date(2026, 12, 7, 9, 30)
+    check("second added week uses same live branch", RecurrenceTemplate.latest(for: second, end: second.addingTimeInterval(7200), in: templates, calendar: cal)?.title ?? "nil", "Calculus II")
+    let tue = date(2026, 12, 1, 9, 30)
+    check("another weekday keeps its own content", RecurrenceTemplate.latest(for: tue, end: tue.addingTimeInterval(7200), in: templates, calendar: cal)?.title ?? "nil", "Tuesday title")
+    check("different duration does not borrow another branch", "\(RecurrenceTemplate.latest(for: start, end: end.addingTimeInterval(1800), in: templates, calendar: cal) == nil)", "true")
+    check("no live branch leaves master fallback available", "\(RecurrenceTemplate.latest(for: start, end: end, in: [], calendar: cal) == nil)", "true")
+    monday.title = "Mutated after snapshot"
+    monday.notes = "Mutated after snapshot"
+    check("snapshot survives EventKit object mutation", content?.title ?? "nil", "Calculus II")
+    let added = event("Calculus", start, notes: "old notes")
+    check("new content is applied", "\(content!.apply(to: added))", "true")
+    check("added title", added.title, "Calculus II")
+    check("added location", added.location ?? "nil", "Room 2")
+    check("added URL", added.url?.absoluteString ?? "nil", "https://example.com/current")
+    check("content leaves new dates untouched", "\(added.startDate == start && added.endDate == end)", "true")
+    check("unchanged content needs no exception save", "\(content!.apply(to: added))", "false")
+    check("existing exception is not rewritten", older.notes ?? "nil", "Keep this exception")
+    let empty = RecurrenceTemplate(event("No metadata", date(2026, 11, 23, 9, 30)))
+    empty.apply(to: added)
+    check("cleared notes/location/URL stay cleared", "\(added.notes == nil && added.location == nil && added.url == nil)", "true")
+    let overnight = event("Night branch", date(2026, 11, 23, 23, 0))
+    let nightStart = date(2026, 11, 30, 23, 0)
+    check("overnight branch inherits correctly", RecurrenceTemplate.latest(for: nightStart, end: nightStart.addingTimeInterval(7200), in: [RecurrenceTemplate(overnight)], calendar: cal)?.title ?? "nil", "Night branch")
+}
+
+print("\nForward-only logical branch extension plans")
+do {
+    func occurrence(_ key: String, _ day: Int, hour: Int = 9, minute: Int = 30, minutes: Int = 60) -> PlannedRepeatOccurrence {
+        let start = date(2026, 9, day, hour, minute)
+        return .init(patternID: key, start: start, end: start.addingTimeInterval(Double(minutes * 60)))
+    }
+    let live = [occurrence("native", 14), occurrence("native", 28)]
+    let original = RepeatPlanner.occurrences(patterns: [.init(id: "native", firstStart: date(2026, 9, 7, 9, 30),
+        weekdays: [2], startMinutes: 570, durationMinutes: 60)], end: .until(date(2026, 9, 28, 0, 0)), calendar: cal)
+    let now = date(2026, 9, 28, 12, 0)
+    let added = RepeatPlanner.extensionOccurrences(live: live, baseline: original, end: .until(date(2026, 10, 12, 0, 0)), now: now, calendar: cal)
+    check("extension adds only two new Mondays", "\(added.count)", "2")
+    check("deleted first and middle sessions are not recreated", "\(added.allSatisfy { $0.start >= date(2026, 10, 5, 9, 30) })", "true")
+    let counted = RepeatPlanner.extensionOccurrences(live: live, baseline: original, end: .count(5), now: now, calendar: cal)
+    check("count means actual live sessions plus additions", "\(live.count + counted.count)", "5")
+    check("count additions start after the old boundary", "\(counted.first?.start == date(2026, 10, 5, 9, 30))", "true")
+    let expanded = live + added
+    let again = RepeatPlanner.extensionOccurrences(live: expanded, baseline: original + added, end: .until(date(2026, 10, 26, 0, 0)), now: now, calendar: cal)
+    check("grouped one-offs do not multiply weekly patterns", "\(again.count)", "2")
+    check("second extension starts after the last added occurrence", "\(again.first?.start == date(2026, 10, 19, 9, 30))", "true")
+    let repeatSame = RepeatPlanner.extensionOccurrences(live: expanded, baseline: original + added, end: .until(date(2026, 10, 12, 0, 0)), now: now, calendar: cal)
+    check("repeating the same boundary is idempotent", "\(repeatSame.isEmpty)", "true")
+    let tuesday = occurrence("tuesday", 29, hour: 11, minute: 0, minutes: 120)
+    let series = RepeatPlanner.extensionOccurrences(live: live + [tuesday], baseline: original + [tuesday], end: .until(date(2026, 10, 6, 0, 0)), now: now, calendar: cal)
+    check("series extension appends each distinct live branch once", "\(series.count)", "2")
+    check("series extension retains separate weekday and time", "\(series.contains { $0.start == date(2026, 10, 6, 11, 0) && $0.end == date(2026, 10, 6, 13, 0) })", "true")
+    let canceledTail = original + [.init(patternID: "native", start: date(2026, 10, 5, 9, 30), end: date(2026, 10, 5, 10, 30))]
+    let afterTail = RepeatPlanner.extensionOccurrences(live: live, baseline: canceledTail, end: .until(date(2026, 10, 12, 0, 0)), now: now, calendar: cal)
+    check("a canceled final week remains excluded", "\(afterTail.count == 1 && afterTail[0].start == date(2026, 10, 12, 9, 30))", "true")
+    let currentDay = RepeatPlanner.extensionOccurrences(live: live, baseline: original, end: .count(3), now: date(2026, 10, 5, 12, 0), calendar: cal)
+    check("never creates a new session earlier today", "\(currentDay.first?.start == date(2026, 10, 12, 9, 30))", "true")
+    let oldClock = original.map { PlannedRepeatOccurrence(patternID: $0.patternID, start: $0.start.addingTimeInterval(1800), end: $0.end.addingTimeInterval(1800)) }
+    let shifted = RepeatPlanner.extensionOccurrences(live: live, baseline: oldClock + live, end: .until(date(2026, 10, 5, 0, 0)), now: now, calendar: cal)
+    check("a stale master clock never becomes a new branch", "\(shifted.count == 1 && shifted[0].start == date(2026, 10, 5, 9, 30))", "true")
 }
 
 print("")

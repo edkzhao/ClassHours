@@ -9,9 +9,65 @@ enum EditScope {
     case wholeSeries
 }
 
+/// Snapshot live content before EventKit rewrites the master or its exceptions.
+struct RecurrenceTemplate: Equatable {
+    let calendarID: String
+    let start: Date
+    let end: Date
+    let title: String?
+    let notes: String?
+    let location: String?
+    let url: URL?
+
+    init(_ event: EKEvent) {
+        calendarID = event.calendar?.calendarIdentifier ?? ""
+        start = event.startDate
+        end = event.endDate
+        title = event.title
+        notes = event.notes
+        location = event.location
+        url = event.url
+    }
+
+    static func latest(for start: Date, end: Date, in templates: [Self],
+                       calendar: Calendar) -> Self? {
+        guard let branch = BranchSignature(start: start, end: end, calendar: calendar) else { return nil }
+        return templates.filter {
+            $0.start < start && branch.matches(start: $0.start, end: $0.end, calendar: calendar)
+        }.max { $0.start < $1.start }
+    }
+
+    @discardableResult
+    func apply(to event: EKEvent) -> Bool {
+        guard event.title != title || event.notes != notes || event.location != location || event.url != url
+        else { return false }
+        event.title = title
+        event.notes = notes
+        event.location = location
+        event.url = url
+        return true
+    }
+}
+
+/// EventKit invalidates occurrence objects when a recurrence is committed.
+struct CreatedOccurrenceReference {
+    let calendarID: String
+    let seriesKey: String
+    let start: Date
+    let end: Date
+
+    init(_ event: EKEvent) {
+        calendarID = event.calendar.calendarIdentifier
+        seriesKey = event.seriesKey
+        start = event.startDate
+        end = event.endDate
+    }
+}
+
 struct CalendarWriter {
     let store: EKEventStore
     let calendar: Calendar
+    var didCreateOccurrence: ((EKEvent) -> Void)? = nil
 
     // MARK: Create
 
@@ -173,10 +229,14 @@ struct CalendarWriter {
         guard let ekCalendar = event.calendar, let start = event.startDate else { return [] }
         let lower = calendar.date(byAdding: .day, value: -1, to: start) ?? start
         let end = max(upper, calendar.startOfDay(for: Date()))
-        return store.events(matching: store.predicateForEvents(
-            withStart: lower, end: end, calendars: [ekCalendar]))
+        var seen = Set<String>()
+        return EventSearch.windows(from: lower, to: end, calendar: calendar).flatMap { window in
+            store.events(matching: store.predicateForEvents(
+                withStart: window.start, end: window.end, calendars: [ekCalendar]))
+        }
             .filter {
                 $0.seriesKey == seriesKey && !$0.isAllDay && $0.status != .canceled
+                    && seen.insert(EventMonthCalculator.stableIdentity($0)).inserted
             }
     }
 
@@ -185,18 +245,58 @@ struct CalendarWriter {
         try store.remove(target, span: span(for: target, scope: scope), commit: true)
     }
 
+    func deleteCreatedOccurrence(_ reference: CreatedOccurrenceReference) throws {
+        guard let targetCalendar = store.calendar(withIdentifier: reference.calendarID) else { return }
+        let matches = store.events(matching: store.predicateForEvents(
+            withStart: reference.start.addingTimeInterval(-1), end: reference.end.addingTimeInterval(1),
+            calendars: [targetCalendar])).filter {
+                $0.seriesKey == reference.seriesKey && $0.startDate == reference.start
+            }
+        guard matches.count <= 1 else {
+            throw NSError(domain: "ClassHours", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Cannot uniquely identify the added occurrence to undo."])
+        }
+        if let event = matches.first { try delete(event, scope: .thisOccurrence) }
+    }
+
     @discardableResult
-    func createOccurrence(copying template: EKEvent, start: Date, end: Date) throws -> EKEvent {
+    func createOccurrence(in targetCalendar: EKCalendar, start: Date, end: Date,
+                          content: RecurrenceTemplate) throws -> EKEvent {
         let event = EKEvent(eventStore: store)
-        event.calendar = template.calendar
-        event.title = template.title
-        event.notes = template.notes
-        event.location = template.location
-        event.url = template.url
+        event.calendar = targetCalendar
         event.startDate = start
         event.endDate = end
+        content.apply(to: event)
         try store.save(event, span: .thisEvent, commit: true)
+        didCreateOccurrence?(event)
         return event
+    }
+
+    func appendOccurrences(_ planned: [PlannedRepeatOccurrence], from live: [EKEvent]) throws -> [String] {
+        let templates = live.map(RecurrenceTemplate.init)
+        let prepared = try planned.map { occurrence -> (PlannedRepeatOccurrence, RecurrenceTemplate, EKCalendar) in
+            guard let content = RecurrenceTemplate.latest(for: occurrence.start, end: occurrence.end,
+                                                          in: templates, calendar: calendar),
+                  let target = store.calendar(withIdentifier: content.calendarID), target.allowsContentModifications
+            else {
+                throw NSError(domain: "ClassHours", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Cannot extend a branch without a current writable occurrence."])
+            }
+            return (occurrence, content, target)
+        }
+        var created: [String] = []
+        var references: [CreatedOccurrenceReference] = []
+        do {
+            for (occurrence, content, target) in prepared {
+                let event = try createOccurrence(in: target, start: occurrence.start, end: occurrence.end, content: content)
+                references.append(CreatedOccurrenceReference(event))
+                created.append(event.seriesKey)
+            }
+            return created
+        } catch {
+            for reference in references.reversed() { try deleteCreatedOccurrence(reference) }
+            throw error
+        }
     }
 
     /// `.futureEvents` truncates the recurrence and spawns a *new* event for the

@@ -177,6 +177,15 @@ to the whole selected branch/series and therefore save without another range
 question. An existing one-off event joins a branch automatically when its
 weekday and time range match.
 
+Extending a boundary appends only the new dates in the shared repeat plan.
+New occurrences inherit title, notes/roles, location, URL, and calendar from the
+latest preceding live occurrence of the same logical branch. A stored first
+occurrence is never used as a content fallback. Existing recurrence masters,
+deleted exceptions, and individual notes are not rewritten to extend a course.
+New records stay in the same logical series. Count extensions count actual live
+sessions; grouped one-offs do not create duplicate weekly patterns. Undo removes
+only the new records, without trying to restore an invalid deleted first event.
+
 New and edited events list future overlaps in a height-limited, scrollable
 preview. The macOS Dock badge mirrors the unchecked feedback count in the
 currently selected Hours report.
