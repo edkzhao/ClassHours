@@ -120,6 +120,15 @@ re-evaluates once a minute while the window is open.
 For a session split across two months, both rows use the real event end, so
 they flip together rather than one going stale at the month boundary.
 
+The Dock badge totals finished, unchecked feedback across every calendar with
+Feedback enabled and every report month already initialized for that calendar.
+It does not depend on the open page, selected calendar, month, or search query.
+Sessions spanning two tracked months count once. Disabled calendars, untracked
+history, short sessions excluded by that calendar's settings, and future sessions
+are not counted. Reading the badge never seeds or changes feedback ticks.
+The total loads at startup and refreshes on return to the app, calendar changes,
+feedback/settings changes, and once a minute; calendar queries run off the UI thread.
+
 ## Other behaviour
 
 - Rows are always chronological. There is no sorting.
@@ -141,6 +150,7 @@ they flip together rather than one going stale at the month boundary.
   a single slow pulse — the same soft wash used to mark today, behind the text
   so nothing is tinted over. Today's own jump doesn't pulse: it happens on every
   launch, and a flash there would just be noise.
+
 
 ## Global search
 
@@ -187,8 +197,8 @@ sessions; grouped one-offs do not create duplicate weekly patterns. Undo removes
 only the new records, without trying to restore an invalid deleted first event.
 
 New and edited events list future overlaps in a height-limited, scrollable
-preview. The macOS Dock badge mirrors the unchecked feedback count in the
-currently selected Hours report.
+preview. The macOS Dock badge aggregates eligible unchecked feedback independently
+of the currently selected Hours report.
 
 ## Sidebar
 

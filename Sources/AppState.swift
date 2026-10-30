@@ -53,6 +53,8 @@ final class AppState: ObservableObject {
     /// The Dock badge is global rather than month-scoped, so it reflects every
     /// feedback item that has been introduced into the user's tracked months.
     @Published private(set) var dockBadgeCount = 0
+    private var dockBadgeTask: Task<Void, Never>?
+    private var dockBadgeRevision = 0
 
     /// Bumped to ask the table to scroll somewhere.
     @Published private(set) var scrollRequestID: Int = 0
@@ -297,6 +299,7 @@ final class AppState: ObservableObject {
     }
 
     deinit {
+        dockBadgeTask?.cancel()
         if let undoShortcutMonitor { NSEvent.removeMonitor(undoShortcutMonitor) }
     }
 
@@ -400,7 +403,7 @@ final class AppState: ObservableObject {
     }
 
     let store = EKEventStore()
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     let calculationCalendar: Calendar = {
         var c = Calendar(identifier: .gregorian)
         c.locale = Locale(identifier: "en_US_POSIX")
@@ -424,7 +427,8 @@ final class AppState: ObservableObject {
 
     // MARK: Init
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         let now = Date()
         var c = Calendar(identifier: .gregorian)
         c.locale = Locale(identifier: "en_US_POSIX")
@@ -441,8 +445,14 @@ final class AppState: ObservableObject {
         page = defaults.string(forKey: Keys.lastPage) == "calendar" ? .calendar : .hours
         authorizationStatus = EKEventStore.authorizationStatus(for: .event)
         calendarChanges = NotificationCenter.default.publisher(for: .EKEventStoreChanged, object: store)
+            .merge(with: NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
             .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
-            .sink { [weak self] _ in self?.invalidateDayCache() }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.authorizationStatus = EKEventStore.authorizationStatus(for: .event)
+                self.invalidateDayCache()
+                self.refreshDockBadge()
+            }
 
         clockTimer = Timer.publish(every: 60, on: .main, in: .common)
             .autoconnect()
@@ -510,8 +520,7 @@ final class AppState: ObservableObject {
     func reloadCalendars() {
         guard hasReadAccess else {
             calendars = []; records = []
-            dockBadgeCount = 0
-            NSApplication.shared.dockTile.badgeLabel = nil
+            refreshDockBadge()
             return
         }
 
@@ -701,8 +710,7 @@ final class AppState: ObservableObject {
               let interval = monthInterval
         else {
             records = []
-            dockBadgeCount = 0
-            NSApplication.shared.dockTile.badgeLabel = nil
+            refreshDockBadge()
             invalidateDayCache()
             return
         }
@@ -785,7 +793,7 @@ final class AppState: ObservableObject {
     func setFeedbackColumnVisible(_ visible: Bool, _ id: String) {
         feedbackVisible[id] = visible
         defaults.set(visible, forKey: Keys.feedbackVisiblePrefix + id)
-        if id == selectedCalendarID { refreshDockBadge() }
+        refreshDockBadge()
     }
 
     func setFeedbackColumnVisible(_ visible: Bool) {
@@ -822,23 +830,33 @@ final class AppState: ObservableObject {
         defaults.set(slice, forKey: Keys.feedbackChecksPrefix + calendarID)
     }
 
-    /// Mirrors the feedback column for the currently selected report. Counting
-    /// directly from `records` avoids silently including hidden calendars or
-    /// historical months the user is not looking at.
-    func refreshDockBadge() {
-        guard hasReadAccess, selectedCalendarID != nil else {
+    /// Independent of report selection, page, search and which months are open.
+    @discardableResult
+    func refreshDockBadge() -> Task<Void, Never> {
+        dockBadgeRevision += 1
+        let revision = dockBadgeRevision
+        dockBadgeTask?.cancel()
+        guard hasReadAccess else {
             dockBadgeCount = 0
             NSApplication.shared.dockTile.badgeLabel = nil
-            return
+            return Task {}
         }
-        let count = FeedbackCounter.uncheckedCount(
-            records: records,
-            now: Date(),
-            countShortEvents: countShortEvents,
-            feedbackEnabled: isFeedbackColumnVisible,
-            isChecked: isChecked)
-        dockBadgeCount = count
-        NSApplication.shared.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
+        let inputs = FeedbackBadge.inputs(calendarIDs: calendars.map(\.id),
+                                           preferences: defaults.dictionaryRepresentation(), calendar: calculationCalendar)
+        let now = Date()
+        let work = Task.detached(priority: .utility) { FeedbackBadge.read(inputs, now: now) }
+        let task = Task { [weak self] in
+            let count = await withTaskCancellationHandler {
+                await work.value
+            } onCancel: {
+                work.cancel()
+            }
+            guard !Task.isCancelled, let self, self.dockBadgeRevision == revision, self.hasReadAccess else { return }
+            self.dockBadgeCount = count
+            NSApplication.shared.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
+        }
+        dockBadgeTask = task
+        return task
     }
 
     // MARK: Derived

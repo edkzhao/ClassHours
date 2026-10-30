@@ -73,7 +73,7 @@ let just29 = clip(start: date(2026, 8, 12, 15, 31),
                   end:   date(2026, 8, 12, 16, 0), into: august)!
 check("29m is short (boundary)", "\(just29.isShort)", "true")
 
-print("\nDock feedback count mirrors the visible report")
+print("\nDock feedback eligibility matches the report")
 let finishedUnchecked = clip(start: date(2026, 8, 12, 10, 0), end: date(2026, 8, 12, 11, 0), into: august)!
 let finishedChecked = clip(start: date(2026, 8, 13, 10, 0), end: date(2026, 8, 13, 11, 0), into: august)!
 let unfinished = clip(start: date(2026, 8, 20, 10, 0), end: date(2026, 8, 20, 11, 0), into: august)!
@@ -733,6 +733,7 @@ do {
           "\(ClassSuggestion.matching("Calculus", calendarID: "current", history: [foreign]).count)", "1")
 }
 
+
 print("\nRecurrence extensions inherit live branch content, never a stale master")
 do {
     let store = EKEventStore()
@@ -817,6 +818,46 @@ do {
     let oldClock = original.map { PlannedRepeatOccurrence(patternID: $0.patternID, start: $0.start.addingTimeInterval(1800), end: $0.end.addingTimeInterval(1800)) }
     let shifted = RepeatPlanner.extensionOccurrences(live: live, baseline: oldClock + live, end: .until(date(2026, 10, 5, 0, 0)), now: now, calendar: cal)
     check("a stale master clock never becomes a new branch", "\(shifted.count == 1 && shifted[0].start == date(2026, 10, 5, 9, 30))", "true")
+}
+
+print("\nDock feedback is independent of the open report")
+do {
+    let preferences: [String: Any] = [
+        "feedbackSeeded.a.2026-08": true, "feedbackSeeded.a.2026-09": true,
+        "feedbackSeeded.a.2026-11": true, "feedbackSeeded.a.2026-13": true,
+        "feedbackSeeded.a.bad": true, "feedbackSeeded.a.2026-07": false,
+        "feedbackVisible.b": false, "feedbackSeeded.b.2026-08": true,
+        "feedbackSeeded.deleted.2026-08": true,
+        "feedbackSeeded.c.2026-08": true, "countShort.c": true
+    ]
+    let inputs = FeedbackBadge.inputs(calendarIDs: ["a", "b", "c"], preferences: preferences, calendar: cal)
+    check("disabled feedback calendars are excluded before fetching", inputs.map(\.id).sorted().joined(separator: ","), "a,c")
+    check("only valid initialized months are included", "\(inputs.first { $0.id == "a" }!.months.count)", "3")
+    var firstFragment = inAugust; firstFragment.stableID = "cross-month"
+    var secondFragment = inSeptember; secondFragment.stableID = "cross-month"
+    var ordinary = finishedUnchecked; ordinary.stableID = "ordinary"
+    var short = genuinelyShort; short.stableID = "short"
+    var running = unfinished; running.stableID = "running"
+    let asOf = date(2026, 9, 2, 0, 0)
+    var fetched: [String] = []
+    let count = FeedbackBadge.count(inputs, now: asOf) { id, month in
+        fetched.append(id + "|" + String(cal.component(.month, from: month.start)))
+        if id == "c" { return [short] }
+        return month.start == august.start ? [firstFragment, ordinary, short] : [secondFragment]
+    }
+    check("global badge sums calendars and months without split-event duplicates", "\(count)", "3")
+    check("future tracked months are not fetched", "\(fetched.contains { $0.hasSuffix("|11") })", "false")
+    let stableChecked = FeedbackBadgeCalendar(id: "a", months: [august], countShortEvents: false,
+                                              checks: [ordinary.stableID: true])
+    check("persisted checks work without opening a calendar", "\(FeedbackBadge.count([stableChecked], now: asOf) { _, _ in [ordinary] })", "0")
+    let legacyChecked = FeedbackBadgeCalendar(id: "a", months: [august], countShortEvents: false, checks: [ordinary.id: true])
+    check("legacy feedback ticks are retained", "\(FeedbackBadge.count([legacyChecked], now: asOf) { _, _ in [ordinary] })", "0")
+    let unchecked = FeedbackBadgeCalendar(id: "a", months: [august], countShortEvents: false,
+                                         checks: [ordinary.stableID: false, ordinary.id: true])
+    check("an explicit unchecked stable value overrides an old tick", "\(FeedbackBadge.count([unchecked], now: asOf) { _, _ in [ordinary] })", "1")
+    let eligibility = FeedbackBadgeCalendar(id: "a", months: [august], countShortEvents: false, checks: [:])
+    check("only finished eligible sessions count", "\(FeedbackBadge.count([eligibility], now: date(2026, 8, 15, 12, 0)) { _, _ in [ordinary, short, running] })", "1")
+    check("no tracked months never imports old history", "\(FeedbackBadge.count([.init(id: "new", months: [], countShortEvents: false, checks: [:])], now: asOf) { _, _ in [ordinary] })", "0")
 }
 
 print("")

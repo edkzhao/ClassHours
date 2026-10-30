@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Half-open matters: an event beginning exactly at midnight on the 1st belongs
 /// to the new month only, so it can never be counted twice across a boundary.
-struct HalfOpenMonthInterval {
+struct HalfOpenMonthInterval: Sendable {
     let start: Date
     let end: Date
 
@@ -83,9 +83,8 @@ struct EventOccurrenceRecord: Identifiable, Hashable {
     func hasFinished(asOf now: Date) -> Bool { endDate <= now }
 }
 
-/// The Dock badge deliberately uses the same records and rules as the visible
-/// feedback column. That keeps its number understandable: it is never a wider
-/// scan of hidden calendars or old months.
+/// The report and Dock share the same eligibility rules; the Dock supplies its
+/// own tracked-month records rather than depending on the open report.
 enum FeedbackCounter {
     static func uncheckedCount(records: [EventOccurrenceRecord], now: Date,
                                countShortEvents: Bool,
